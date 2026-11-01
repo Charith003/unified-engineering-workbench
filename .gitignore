@@ -1,0 +1,16 @@
+# Build outputs & dependencies
+build/
+frontend/node_modules/
+*.obj
+*.o
+*.pdb
+*.log
+.DS_Store
+Thumbs.db
+uew_port.txt
+
+# Keep binaries for zero-compile standalone delivery
+!Launch.exe
+!uew_server.exe
+!uew_tests.exe
+!frontend/dist/

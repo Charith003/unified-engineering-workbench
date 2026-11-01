@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build All (C++ Server & Frontend)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -Command \"& { $env:PATH = 'C:\\Users\\chari\\w64devkit\\bin;' + $env:PATH; cd frontend; npm run build; cd ..; g++ -std=c++17 -O3 -Ibackend/include -Ibackend/third_party backend/src/geometry/stl_parser.cpp backend/src/geometry/csv_parser.cpp backend/src/thermal/fem_solver.cpp backend/src/performance/benchmark.cpp backend/src/hardware/adapters.cpp backend/src/backprop/network.cpp backend/src/api/job_manager.cpp backend/src/main.cpp -lws2_32 -o uew_server.exe; g++ -std=c++17 -O2 packaging/launcher.cpp -o Launch.exe }\"",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Run Tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/uew_tests.exe",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    }
+  ]
+}

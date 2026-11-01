@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch UEW (One-Click Standalone)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/Launch.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": true,
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:/Users/chari/w64devkit/bin/gdb.exe"
+    },
+    {
+      "name": "Run Automated Tests (uew_tests.exe)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/uew_tests.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:/Users/chari/w64devkit/bin/gdb.exe"
+    }
+  ]
+}
