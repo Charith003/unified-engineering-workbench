@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Box, Thermometer, Zap, Cpu, Brain,
-  FileText, BookOpen, Settings, Bell, Activity
+  FileText, BookOpen, Settings, Bell, Activity, Layers
 } from 'lucide-react';
 import { getHealth } from './services/api';
 
@@ -14,6 +14,7 @@ import HardwarePage        from './pages/HardwarePage';
 import NeuralPage          from './pages/NeuralPage';
 import ReportsPage         from './pages/ReportsPage';
 import DocumentationPage   from './pages/DocumentationPage';
+import HeatSinkPage        from './pages/HeatSinkPage';
 
 import './index.css';
 
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { to: '/',           label: 'Overview',            icon: LayoutDashboard },
   { to: '/geometry',   label: 'Geometry Studio',     icon: Box             },
   { to: '/thermal',    label: 'Thermal Analysis',    icon: Thermometer     },
+  { to: '/heatsink',   label: '3D Heat Sink FEM',    icon: Layers          },
   { to: '/performance',label: 'Performance Lab',     icon: Zap             },
   { to: '/hardware',   label: 'Hardware Integration',icon: Cpu             },
   { to: '/neural',     label: 'Neural Computation',  icon: Brain           },
@@ -32,6 +34,7 @@ const MODULE_NAMES: Record<string, string> = {
   '/':            'Overview',
   '/geometry':    'Geometry Studio',
   '/thermal':     'Thermal Analysis',
+  '/heatsink':    '3D Heat Sink FEM',
   '/performance': 'Performance Lab',
   '/hardware':    'Hardware Integration',
   '/neural':      'Neural Computation',
@@ -136,6 +139,7 @@ function AppShell() {
           <Route path="/"            element={<OverviewPage      connStatus={connStatus} />} />
           <Route path="/geometry"    element={<GeometryPage />}   />
           <Route path="/thermal"     element={<ThermalPage />}    />
+          <Route path="/heatsink"    element={<HeatSinkPage />}   />
           <Route path="/performance" element={<PerformancePage />}/>
           <Route path="/hardware"    element={<HardwarePage />}   />
           <Route path="/neural"      element={<NeuralPage />}     />

@@ -36,11 +36,20 @@ include_directories(
 add_library(uew_core STATIC
   backend/src/geometry/stl_parser.cpp
   backend/src/geometry/csv_parser.cpp
+  backend/src/geometry/heat_sink_geometry.cpp
+  backend/src/mesh/mesh_generator.cpp
+  backend/src/mesh/mesh_validator.cpp
   backend/src/thermal/fem_solver.cpp
+  backend/src/thermal/fem_3d_solver.cpp
+  backend/src/solvers/cholesky_solver.cpp
+  backend/src/solvers/conjugate_gradient_solver.cpp
+  backend/src/solvers/gauss_seidel_solver.cpp
+  backend/src/benchmark/solver_benchmark.cpp
   backend/src/performance/benchmark.cpp
   backend/src/hardware/adapters.cpp
   backend/src/backprop/network.cpp
   backend/src/api/job_manager.cpp
+  backend/src/api/heat_sink_api.cpp
 )
 target_include_directories(uew_core PUBLIC ${BACKEND_INC} ${THIRD_PARTY})
 
@@ -101,6 +110,21 @@ add_uew_test(test_hardware
 
 add_uew_test(test_backprop
   "tests/backprop/test_network.cpp")
+
+add_uew_test(test_heat_sink_geometry
+  "tests/geometry/test_heat_sink_geometry.cpp")
+
+add_uew_test(test_mesh
+  "tests/mesh/test_mesh_generator.cpp")
+
+add_uew_test(test_fem_3d
+  "tests/thermal/test_fem_3d.cpp")
+
+add_uew_test(test_solvers
+  "tests/solvers/test_numerical_solvers.cpp")
+
+add_uew_test(test_solver_benchmark
+  "tests/benchmark/test_solver_benchmark.cpp")
 
 # ─────────────────────────────────────────────────────────
 # Output binaries to build/bin

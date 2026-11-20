@@ -1,7 +1,9 @@
 import axios, { type AxiosInstance } from 'axios';
 import type {
   ApiResponse, STLResult, CSVResult, ThermalResult, MeshConvergenceResult,
-  JobStatus, DeviceInfo, TelemetryReading, BackpropResult
+  JobStatus, DeviceInfo, TelemetryReading, BackpropResult,
+  HeatSinkParams, HeatSinkGeometryResult, HeatSinkMeshResult,
+  HeatSinkThermalResult, HeatSinkBenchmarkResult, HeatSinkConvergenceResult
 } from '../types/api';
 
 // In dev, Vite proxies /api → the C++ server.
@@ -88,5 +90,89 @@ export interface BackpropConfig { lr?: number; steps?: number; epsilon?: number;
 
 export async function runBackprop(config: BackpropConfig): Promise<ApiResponse<BackpropResult>> {
   const r = await http.post<ApiResponse<BackpropResult>>('/api/backprop/run', config);
+  return r.data;
+}
+
+// ─── 3D Heat Sink FEM & Solver Benchmark ─────────────────
+export async function generateHeatSinkGeometry(params?: Partial<HeatSinkParams>): Promise<ApiResponse<HeatSinkGeometryResult>> {
+  const r = await http.post<ApiResponse<HeatSinkGeometryResult>>('/api/heat-sink/geometry/generate', params ?? {});
+  return r.data;
+}
+
+export async function generateHeatSinkMesh(payload: {
+  params?: Partial<HeatSinkParams>;
+  resolution: 'coarse' | 'medium' | 'fine';
+}): Promise<ApiResponse<HeatSinkMeshResult>> {
+  const r = await http.post<ApiResponse<HeatSinkMeshResult>>('/api/heat-sink/mesh/generate', {
+    ...(payload.params ?? {}),
+    resolution: payload.resolution
+  });
+  return r.data;
+}
+
+export async function solveHeatSinkThermal(payload: {
+  params?: Partial<HeatSinkParams>;
+  resolution: 'coarse' | 'medium' | 'fine';
+  solver: 'cholesky' | 'cg' | 'gauss_seidel';
+  material?: { name: string; thermal_conductivity: number; density: number; specific_heat: number };
+  boundary_conditions?: {
+    ambient_temperature_c: number;
+    heat_transfer_coefficient: number;
+    heat_source_power_w: number;
+    fix_mounting_holes: boolean;
+    fixed_mounting_temperature_c: number;
+  };
+  tolerance?: number;
+  max_iterations?: number;
+  relaxation_omega?: number;
+}): Promise<ApiResponse<HeatSinkThermalResult>> {
+  const r = await http.post<ApiResponse<HeatSinkThermalResult>>('/api/heat-sink/thermal/solve', {
+    ...(payload.params ?? {}),
+    resolution: payload.resolution,
+    solver: payload.solver,
+    material: payload.material,
+    boundary_conditions: payload.boundary_conditions,
+    tolerance: payload.tolerance,
+    max_iterations: payload.max_iterations,
+    relaxation_omega: payload.relaxation_omega
+  });
+  return r.data;
+}
+
+export async function runHeatSinkBenchmark(payload: {
+  params?: Partial<HeatSinkParams>;
+  resolution: 'coarse' | 'medium' | 'fine';
+  trial_count?: number;
+  material?: { name: string; thermal_conductivity: number };
+  boundary_conditions?: {
+    ambient_temperature_c: number;
+    heat_transfer_coefficient: number;
+    heat_source_power_w: number;
+  };
+}): Promise<ApiResponse<HeatSinkBenchmarkResult>> {
+  const r = await http.post<ApiResponse<HeatSinkBenchmarkResult>>('/api/heat-sink/benchmark/run', {
+    ...(payload.params ?? {}),
+    resolution: payload.resolution,
+    trial_count: payload.trial_count ?? 5,
+    material: payload.material,
+    boundary_conditions: payload.boundary_conditions
+  });
+  return r.data;
+}
+
+export async function runHeatSinkConvergence(payload?: {
+  params?: Partial<HeatSinkParams>;
+  material?: { name: string; thermal_conductivity: number };
+  boundary_conditions?: {
+    ambient_temperature_c: number;
+    heat_transfer_coefficient: number;
+    heat_source_power_w: number;
+  };
+}): Promise<ApiResponse<HeatSinkConvergenceResult>> {
+  const r = await http.post<ApiResponse<HeatSinkConvergenceResult>>('/api/heat-sink/convergence/run', {
+    ...(payload?.params ?? {}),
+    material: payload?.material,
+    boundary_conditions: payload?.boundary_conditions
+  });
   return r.data;
 }

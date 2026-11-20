@@ -150,3 +150,155 @@ export interface BackpropResult {
   history: Array<{ step: number; w: number; b: number; v: number; c: number; loss: number }>;
   loss_csv: string;
 }
+
+// ─────────────────────────────────────────────────────────
+// 3D Heat Sink FEM & Numerical Solver Benchmark Types
+// ─────────────────────────────────────────────────────────
+export interface HeatSinkFin {
+  y_start: number;
+  thickness: number;
+  height: number;
+}
+
+export interface HeatSinkParams {
+  base_length: number;
+  base_width: number;
+  base_thickness: number;
+  fin_count: number;
+  fins: HeatSinkFin[];
+  has_mounting_holes: boolean;
+  hole_diameter: number;
+  heat_source_length: number;
+  heat_source_width: number;
+  heat_source_x_off: number;
+  heat_source_y_off: number;
+}
+
+export interface SurfaceFacet {
+  v0: { x: number; y: number; z: number };
+  v1: { x: number; y: number; z: number };
+  v2: { x: number; y: number; z: number };
+  normal: { x: number; y: number; z: number };
+  tag: string;
+}
+
+export interface HeatSinkGeometryResult {
+  is_valid: boolean;
+  message: string;
+  total_volume_m3: number;
+  total_surface_area_m2: number;
+  fin_surface_area_m2: number;
+  base_surface_area_m2: number;
+  heat_source_area_m2: number;
+  facet_count: number;
+  facets: SurfaceFacet[];
+  stl_data: string;
+}
+
+export interface HeatSinkMeshNode {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface HeatSinkMeshFace {
+  id: number;
+  nodes: [number, number, number];
+  boundary_type: string;
+  area: number;
+  normal: [number, number, number];
+}
+
+export interface HeatSinkMeshResult {
+  is_valid: boolean;
+  status_message: string;
+  resolution: string;
+  node_count: number;
+  element_count: number;
+  boundary_face_count: number;
+  degrees_of_freedom: number;
+  generation_time_ms: number;
+  approx_memory_kb: number;
+  min_quality: number;
+  max_quality: number;
+  mean_quality: number;
+  nodes: HeatSinkMeshNode[];
+  boundary_faces: HeatSinkMeshFace[];
+}
+
+export interface SolverMetric {
+  solver_name: string;
+  success: boolean;
+  status_message: string;
+  iterations: number;
+  residual_norm: number;
+  max_temp_diff_vs_reference_c: number;
+  median_total_time_ms: number;
+  min_total_time_ms: number;
+  max_total_time_ms: number;
+  median_factorization_time_ms: number;
+  median_solve_time_ms: number;
+  speedup_vs_reference: number;
+  memory_kb: number;
+  trial_times_ms: number[];
+}
+
+export interface HeatSinkBenchmarkResult {
+  resolution: string;
+  dof_count: number;
+  element_count: number;
+  non_zeros: number;
+  assembly_time_ms: number;
+  total_heat_in_w: number;
+  total_heat_out_w: number;
+  energy_balance_error_percent: number;
+  min_temperature_c: number;
+  max_temperature_c: number;
+  thermal_resistance_k_w: number;
+  solvers: SolverMetric[];
+  reference_solution: number[];
+}
+
+export interface ConvergencePoint {
+  resolution_name: string;
+  node_count: number;
+  element_count: number;
+  max_temperature_c: number;
+  min_temperature_c: number;
+  avg_temperature_c: number;
+  thermal_resistance_k_w: number;
+  relative_change_percent: number;
+  assembly_time_ms: number;
+  cholesky_time_ms: number;
+  cg_time_ms: number;
+  gs_time_ms: number;
+}
+
+export interface HeatSinkConvergenceResult {
+  is_converged: boolean;
+  asymptotic_estimate_c: number;
+  recommendation: string;
+  points: ConvergencePoint[];
+}
+
+export interface HeatSinkThermalResult {
+  success: boolean;
+  solver_name: string;
+  status_message: string;
+  min_temperature_c: number;
+  max_temperature_c: number;
+  avg_temperature_c: number;
+  thermal_resistance_k_w: number;
+  total_heat_in_w: number;
+  total_heat_out_w: number;
+  energy_balance_error_percent: number;
+  assembly_time_ms: number;
+  factorization_time_ms: number;
+  solve_time_ms: number;
+  total_time_ms: number;
+  iterations: number;
+  residual_norm: number;
+  memory_kb: number;
+  nodal_temperatures: number[];
+}

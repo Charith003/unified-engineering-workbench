@@ -19,6 +19,7 @@
 #include "core/hardware/adapters.hpp"
 #include "core/backprop/network.hpp"
 #include "api/job_manager.hpp"
+#include "api/heat_sink_api.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -587,6 +588,9 @@ int main(int argc, char* argv[]) {
             json_response(req, res, error_response(e.what()), 400);
         }
     });
+
+    // ── 3D Heat Sink FEM & Solver Benchmarking routes ───
+    uew::api::register_heat_sink_routes(svr);
 
     // ── Frontend static files ───────────────────────────
     if (!g_frontend_dist.empty()) {
