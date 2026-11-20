@@ -9,6 +9,9 @@ frontend/node_modules/
 Thumbs.db
 uew_port.txt
 
+# Compiler toolchain (large, platform-specific)
+tools/
+
 # Keep binaries for zero-compile standalone delivery
 !Launch.exe
 !uew_server.exe
