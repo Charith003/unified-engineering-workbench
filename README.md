@@ -30,6 +30,7 @@ UEW is fully packaged for standalone Windows 11 execution with **zero prerequisi
 | **Overview Dashboard** | Module health status, quick launch shortcuts, telemetry preview | Health monitoring, system uptime | Dynamic cards, live backend connection dot |
 | **Geometry Studio** | ASCII STL 3D visualization, synthetic temperature node point cloud | ASCII STL parser, CSV parser, bounding box calculator | Three.js WebGL orbit viewer, Plotly 3D scatter point cloud |
 | **Thermal Analysis** | 1D steady-state heat equation, analytical solution, $N=10, 20, 40, 80$ | Weak-form FE assembly, Dirichlet enforcement, Thomas tridiagonal solver | Numerical vs analytical curves, $O(h^2)$ midpoint error log-log plot |
+| **3D Heat Sink FEM** | Parametric asymmetric heat sink, TET4 mesh, 3-solver benchmark | Conforming 5-tet decomposition, Robin convection BCs, Cholesky/CG/SSOR solvers | Plotly histograms, runtime distributions, mesh convergence curves |
 | **Performance Lab** | Multicore CPU scaling, worker pool (1P–4P), 5-run median timings | `std::thread` pool, deterministic batch generator, agreement check | Execution time, speedup factor ($S = T_1/T_p$), parallel efficiency |
 | **Hardware Integration** | Microcontroller, FPGA, and JTAG Debug Adapter simulation | State machine mock adapters, simulated timeout fault & recovery | Device controls, live sensor telemetry, schematic documentation |
 | **Neural Computation** | Exact scalar $\tanh$ regression, handwritten-gradient backpropagation | Analytical partial derivatives, central finite-difference verification ($\le 10^{-5}$) | 100-step training loss curve, gradient comparison table |
@@ -47,10 +48,15 @@ Run the precompiled GoogleTest verification binary directly:
 ```
 
 ### Summary of Executed Tests:
-- **Total Tests:** 45
-- **Passed:** 45 (100%)
-- **Failed:** 0
-- **Suites:** Backprop (8), HardwareTest (9), Performance (6), ThermalFEM (9), CSVParser (6), STLParser (7).
+- **Total Tests:** 65 across all test suites
+- **Legacy Suite (`uew_tests.exe`):** 45 passed / 0 failed (Backprop: 8, Hardware: 9, Performance: 6, Thermal 1D: 9, CSV: 6, STL: 7)
+- **3D Thermal & Solvers Suite (`test_all_phases.exe`):** 20 passed / 0 failed (Geometry: 7, Mesh: 5, Thermal 3D: 2, Solvers: 4, Benchmark: 2)
+- **Overall Pass Rate:** 100% (65 / 65)
+
+```powershell
+# Run the 3D Thermal FEM & Solvers test suite:
+.\test_all_phases.exe
+```
 
 ---
 
@@ -90,6 +96,11 @@ g++ -std=c++17 -O2 packaging/launcher.cpp -o Launch.exe
 
 ## 5. Technical Documentation Index
 
+### Core Technical Reports:
+- [Technical Architecture Specification](TECHNICAL_ARCHITECTURE.md)
+- [3D Thermal FEM Numerical Methods](NUMERICAL_METHODS.md)
+- [Solver Benchmark Methodology](BENCHMARK_METHODOLOGY.md)
+- [Numerical Validation & Verification Report](VALIDATION_REPORT.md)
 - [System Architecture](docs/architecture.md)
 - [1D Thermal FEA Mathematical Theory](docs/thermal_theory.md)
 - [Embedded Hardware Integration Specification](docs/embedded_design.md)

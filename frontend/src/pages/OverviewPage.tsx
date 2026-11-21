@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Box, Thermometer, Zap, Cpu, Brain, ArrowRight, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Box, Thermometer, Zap, Cpu, Brain, ArrowRight, CheckCircle, Clock, AlertCircle, Layers } from 'lucide-react';
 
 interface Props { connStatus: 'connecting' | 'connected' | 'error'; }
 
@@ -13,6 +13,12 @@ const MODULES = [
     id: 'thermal', label: 'Thermal Analysis', icon: Thermometer,
     desc: '1D FEM steady-state heat conduction with convergence study',
     path: '/thermal', color: '#F59E0B',
+  },
+  {
+    id: 'heatsink', label: '3D Heat Sink FEM', icon: Layers,
+    desc: 'Parametric asymmetric heat sink → TET4 mesh → Cholesky / CG / SSOR solver benchmark',
+    path: '/heatsink', color: '#B7F34A',
+    badge: 'NEW',
   },
   {
     id: 'performance', label: 'Performance Lab', icon: Zap,
@@ -74,7 +80,7 @@ export default function OverviewPage({ connStatus }: Props) {
 
       {/* Module cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16, marginBottom: 32 }}>
-        {MODULES.map(({ id, label, icon: Icon, desc, path, color }) => (
+        {MODULES.map(({ id, label, icon: Icon, desc, path, color, badge }) => (
           <div key={id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.2s, border-color 0.2s' }}
                onClick={() => navigate(path)}
                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = color; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 20px rgba(0,0,0,0.08)`; }}
@@ -83,7 +89,22 @@ export default function OverviewPage({ connStatus }: Props) {
               <div style={{ background: color + '20', borderRadius: 8, padding: 10, marginBottom: 12 }}>
                 <Icon size={20} style={{ color }} />
               </div>
-              <ArrowRight size={14} style={{ color: 'var(--text-secondary)', marginTop: 4 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {badge && (
+                  <span style={{
+                    background: '#B7F34A',
+                    color: '#202820',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 10,
+                    letterSpacing: '0.05em'
+                  }}>
+                    {badge}
+                  </span>
+                )}
+                <ArrowRight size={14} style={{ color: 'var(--text-secondary)', marginTop: 4 }} />
+              </div>
             </div>
             <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{label}</div>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{desc}</div>
@@ -97,10 +118,11 @@ export default function OverviewPage({ connStatus }: Props) {
           <div className="card-title"><span className="accent-dot" />Technology Stack</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {[
-              ['Backend',     'C++17 · CMake · cpp-httplib · nlohmann/json'],
-              ['Frontend',    'React 18 · TypeScript · Vite · Tailwind CSS'],
+              ['Backend',     'C++17/20 · CMake · cpp-httplib · nlohmann/json · Eigen 3.4.0'],
+              ['Frontend',    'React 19 · TypeScript · Vite · Tailwind CSS'],
               ['Visualization','Three.js · Plotly.js · Lucide React'],
-              ['Testing',     'GoogleTest (C++)'],
+              ['Solvers',     'SimplicialLDLT · Conjugate Gradient · SSOR Gauss-Seidel'],
+              ['Testing',     'GoogleTest (C++ 65 tests)'],
               ['Platform',    'Windows 11 x64'],
             ].map(([k, v]) => (
               <div key={k} style={{ display: 'flex', gap: 8, fontSize: 12 }}>

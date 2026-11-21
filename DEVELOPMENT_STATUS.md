@@ -79,13 +79,43 @@
 - [x] AI usage log (`docs/AI_usage_log.md`) and ownership statement (`docs/ownership.md`)
 - [x] Pinned open-source licenses (`LICENSES.md`)
 
+### PHASE 9 — 3D Thermal FEM, Numerical Solvers & Benchmarking: COMPLETE
+- [x] **Parametric Asymmetric Heat Sink Geometry:** 120×80×8 mm aluminum base, 7 asymmetric fins (22–45 mm height, variable spacing), 30×25 mm 15 W heat source, mounting cutouts, ASCII STL export
+- [x] **3D Tetrahedral Mesh Generator:** Conforming 5-tet hexahedral decomposition with Coarse (~1.5k tets), Medium (~6k tets), and Fine (~20k tets) presets
+- [x] **Mesh Quality & Topology Validator:** Non-finite coordinate rejection, degenerate element detection, inverted tetrahedral element check, boundary face classification
+- [x] **3D Steady-State Thermal FEM Engine:**
+  - Governing equation: $-\nabla \cdot (k \nabla T) = Q$
+  - Linear tetrahedral element (TET4) stiffness matrix: $K^e = k \cdot V_e \cdot (\mathbf{B}^T \mathbf{B})$
+  - Robin convection boundary condition surface integration: $K^{\text{conv}}_{ij} = \frac{h A}{12}\begin{bmatrix}2&1&1\\1&2&1\\1&1&2\end{bmatrix}$
+  - Neumann heat flux surface integration & Dirichlet symmetric constraint enforcement
+  - Global energy conservation verification: $|Q_{\text{in}} - Q_{\text{conv}}| / Q_{\text{in}} < 5\%$
+- [x] **Three Numerical Solvers on Identical Assembled System:**
+  - Sparse Cholesky Direct Factorization (`Eigen::SimplicialLDLT`) — Gold-standard reference
+  - Preconditioned Conjugate Gradient (Jacobi preconditioner) — Krylov iterative
+  - Symmetric Gauss-Seidel (SSOR forward+backward sweeps) — Stationary iterative
+- [x] **Solver Benchmark Engine:**
+  - 1 warm-up run + $N$ measured trials per solver
+  - Median wall-clock execution time calculation (microseconds precision)
+  - Speedup relative to reference, residual norm $\|K T - F\|_2 / \|F\|_2$, max temperature difference $\max |\Delta T|$
+- [x] **Mesh Convergence Study:**
+  - Automated Coarse $\rightarrow$ Medium $\rightarrow$ Fine progression tracking DOF count, element count, solve time, and asymptotic maximum temperature
+- [x] **REST API Endpoints:** 5 dedicated endpoints (`/api/heat-sink/geometry/generate`, `/api/heat-sink/mesh/generate`, `/api/heat-sink/thermal/solve`, `/api/heat-sink/benchmark/run`, `/api/heat-sink/convergence/run`)
+- [x] **Frontend 3D Heat Sink Studio:** Dedicated 5-tab scientific workspace (`HeatSinkPage.tsx`) with Plotly interactive charts, quality histograms, solver comparison tables, and convergence curves
+- [x] **Research Documentation:**
+  - [Technical Architecture](TECHNICAL_ARCHITECTURE.md)
+  - [Numerical Methods Formulation](NUMERICAL_METHODS.md)
+  - [Benchmark Methodology](BENCHMARK_METHODOLOGY.md)
+  - [Validation & Verification Report](VALIDATION_REPORT.md)
+
 ---
 
 ## AUTOMATED TEST RESULTS SUMMARY
 
 ```
-[==========] Running 45 tests from 6 test suites.
+[==========] Original Legacy Test Suite: 45 tests from 6 test suites.
 [  PASSED  ] 45 tests.
-[  FAILED  ] 0 tests.
+[==========] 3D Thermal FEM & Solvers Test Suite: 20 tests from 6 test suites.
+[  PASSED  ] 20 tests (Geometry: 7, Mesh: 5, Thermal FEM: 2, Solvers: 4, Benchmark: 2).
+[==========] Combined Total: 65 tests executed / 65 passed / 0 failed (100% success rate).
 ```
 All automated tests executed with 100% success rate.
