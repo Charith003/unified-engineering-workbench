@@ -301,4 +301,6 @@ export interface HeatSinkThermalResult {
   residual_norm: number;
   memory_kb: number;
   nodal_temperatures: number[];
+  nodes?: HeatSinkMeshNode[];
+  boundary_faces?: HeatSinkMeshFace[];
 }

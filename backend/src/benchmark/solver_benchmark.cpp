@@ -41,14 +41,23 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
     config.relaxation_omega = 1.0;
 
     Eigen::VectorXd ref_solution;
-    double ref_median_time_ms = 1.0;
+    bool cholesky_valid = false;
+    double ref_median_time_ms = 0.0;
+
+    auto compute_median = [](std::vector<double>& v) -> double {
+        if (v.empty()) return 0.0;
+        std::sort(v.begin(), v.end());
+        size_t n = v.size();
+        if (n % 2 == 1) return v[n / 2];
+        return (v[n / 2 - 1] + v[n / 2]) * 0.5;
+    };
 
     for (size_t s_idx = 0; s_idx < solver_instances.size(); ++s_idx) {
         auto& solver = solver_instances[s_idx];
         SolverBenchmarkMetrics metrics;
         metrics.solver_name = solver->name();
 
-        // Warm-up run (excluded from timing)
+        // Warm-up run (excluded from timing to prime CPU cache and stabilize frequency)
         auto warmup_res = solver->solve(sys.K, sys.F, config);
 
         std::vector<double> total_times;
@@ -64,33 +73,42 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
             last_res = run_res;
         }
 
-        // Sort timings to compute median
-        std::sort(total_times.begin(), total_times.end());
-        std::sort(fact_times.begin(), fact_times.end());
-        std::sort(solve_times.begin(), solve_times.end());
-
         metrics.trial_times_ms = total_times;
-        metrics.median_total_time_ms = total_times[total_times.size() / 2];
-        metrics.min_total_time_ms = total_times.front();
-        metrics.max_total_time_ms = total_times.back();
-        metrics.median_factorization_time_ms = fact_times[fact_times.size() / 2];
-        metrics.median_solve_time_ms = solve_times[solve_times.size() / 2];
+
+        // Compute min, max, and median across trials
+        auto sorted_totals = total_times;
+        std::sort(sorted_totals.begin(), sorted_totals.end());
+        metrics.min_total_time_ms = sorted_totals.empty() ? 0.0 : sorted_totals.front();
+        metrics.max_total_time_ms = sorted_totals.empty() ? 0.0 : sorted_totals.back();
+        metrics.median_total_time_ms = compute_median(total_times);
+        metrics.median_factorization_time_ms = compute_median(fact_times);
+        metrics.median_solve_time_ms = compute_median(solve_times);
 
         metrics.success = last_res.success;
         metrics.status_message = last_res.success ? "Converged" : ("Failed: " + last_res.error_message);
         metrics.iterations = last_res.iterations;
-        metrics.residual_norm = last_res.residual_norm;
         metrics.memory_kb = last_res.estimated_memory_bytes / 1024;
+
+        // Calculate residual directly from the original assembled system K * x - F
+        if (last_res.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) {
+            Eigen::VectorXd r_eval = sys.K * last_res.solution - sys.F;
+            double b_norm = sys.F.norm();
+            if (b_norm < 1e-15) b_norm = 1.0;
+            metrics.residual_norm = r_eval.norm() / b_norm;
+        } else {
+            metrics.residual_norm = last_res.residual_norm;
+        }
 
         if (s_idx == 0) {
             // First solver is Cholesky (Reference)
-            ref_solution = last_res.solution;
-            ref_median_time_ms = std::max(0.01, metrics.median_total_time_ms);
-            metrics.speedup_vs_reference = 1.0;
-            metrics.max_temp_diff_vs_reference_c = 0.0;
+            if (last_res.success && last_res.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) {
+                cholesky_valid = true;
+                ref_solution = last_res.solution;
+                ref_median_time_ms = std::max(0.001, metrics.median_total_time_ms);
+                metrics.speedup_vs_reference = 1.0;
+                metrics.max_temp_diff_vs_reference_c = 0.0;
 
-            // Compute global thermal properties from reference solution
-            if (ref_solution.size() > 0) {
+                // Compute global thermal properties from reference solution
                 report.min_temperature_c = ref_solution.minCoeff();
                 report.max_temperature_c = ref_solution.maxCoeff();
                 double p_in = std::max(0.001, sys.total_heat_in_w);
@@ -104,18 +122,30 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
                 for (Eigen::Index i = 0; i < ref_solution.size(); ++i) {
                     report.reference_solution[i] = ref_solution(i);
                 }
+            } else {
+                cholesky_valid = false;
+                metrics.success = false;
+                metrics.status_message = "Cholesky reference solver failed: " + last_res.error_message;
+                metrics.speedup_vs_reference = 0.0;
+                metrics.max_temp_diff_vs_reference_c = -1.0;
             }
         } else {
-            // Compute speedup: T_ref / T_solver
-            metrics.speedup_vs_reference = ref_median_time_ms / std::max(0.001, metrics.median_total_time_ms);
+            // Compute speedup: T_ref / T_solver (only if both reference and solver succeeded)
+            if (cholesky_valid && last_res.success && metrics.median_total_time_ms > 0.0) {
+                metrics.speedup_vs_reference = ref_median_time_ms / metrics.median_total_time_ms;
+            } else {
+                metrics.speedup_vs_reference = 0.0;
+            }
 
-            // Compute max temperature discrepancy: max |T_i - T_i,ref|
-            if (ref_solution.size() == last_res.solution.size()) {
+            // Compute max temperature discrepancy only if both reference and current solver succeeded
+            if (cholesky_valid && last_res.success && ref_solution.size() == last_res.solution.size()) {
                 double max_diff = 0.0;
                 for (Eigen::Index i = 0; i < ref_solution.size(); ++i) {
                     max_diff = std::max(max_diff, std::abs(ref_solution(i) - last_res.solution(i)));
                 }
                 metrics.max_temp_diff_vs_reference_c = max_diff;
+            } else {
+                metrics.max_temp_diff_vs_reference_c = -1.0; // N/A due to failure
             }
         }
 
@@ -145,7 +175,10 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         mesh::MeshGenerationOptions opts;
         opts.resolution = lvl.second;
         auto m = gen.generate(opts);
-        mesh::MeshValidator::validate(m);
+        auto val_report = mesh::MeshValidator::validate(m);
+        if (!val_report.is_valid) {
+            throw std::runtime_error("Convergence study failed: mesh validation failed for level " + lvl.first + ": " + val_report.message);
+        }
 
         thermal::FEM3DSolver fem;
         auto sys = fem.assemble(m, material, bc);

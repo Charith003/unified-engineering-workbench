@@ -203,7 +203,11 @@ void register_heat_sink_routes(httplib::Server& svr) {
             mesh::MeshGenerationOptions opts;
             opts.resolution = res_preset;
             auto m = gen.generate(opts);
-            mesh::MeshValidator::validate(m);
+            auto val_report = mesh::MeshValidator::validate(m);
+            if (!val_report.is_valid) {
+                json_response(req, res, {{"success", false}, {"error", "Cannot perform thermal solve on invalid mesh: " + val_report.message}}, 400);
+                return;
+            }
 
             thermal::FEM3DSolver fem;
             auto sys = fem.assemble(m, mat, bc);
@@ -236,6 +240,23 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 nodal_temps[i] = sres.solution(i);
             }
 
+            // Serialize nodes and boundary faces for 3D temperature visualization
+            json nodes_json = json::array();
+            for (const auto& n : m.nodes) {
+                nodes_json.push_back({{"id", n.id}, {"x", n.x}, {"y", n.y}, {"z", n.z}});
+            }
+
+            json faces_json = json::array();
+            for (const auto& f : m.boundary_faces) {
+                faces_json.push_back({
+                    {"id", f.id},
+                    {"nodes", {f.nodes[0], f.nodes[1], f.nodes[2]}},
+                    {"boundary_type", mesh::to_string(f.boundary_type)},
+                    {"area", f.area},
+                    {"normal", {f.normal[0], f.normal[1], f.normal[2]}}
+                });
+            }
+
             json data = {
                 {"success", sres.success},
                 {"solver_name", sres.solver_name},
@@ -254,7 +275,9 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"iterations", sres.iterations},
                 {"residual_norm", sres.residual_norm},
                 {"memory_kb", sres.estimated_memory_bytes / 1024},
-                {"nodal_temperatures", nodal_temps}
+                {"nodal_temperatures", nodal_temps},
+                {"nodes", nodes_json},
+                {"boundary_faces", faces_json}
             };
 
             json_response(req, res, {{"success", true}, {"data", data}});
@@ -286,7 +309,11 @@ void register_heat_sink_routes(httplib::Server& svr) {
             mesh::MeshGenerationOptions opts;
             opts.resolution = res_preset;
             auto m = gen.generate(opts);
-            mesh::MeshValidator::validate(m);
+            auto val_report = mesh::MeshValidator::validate(m);
+            if (!val_report.is_valid) {
+                json_response(req, res, {{"success", false}, {"error", "Cannot perform solver benchmark on invalid mesh: " + val_report.message}}, 400);
+                return;
+            }
 
             benchmark::SolverBenchmark bench;
             auto report = bench.run_benchmark(m, mat, bc, trials);

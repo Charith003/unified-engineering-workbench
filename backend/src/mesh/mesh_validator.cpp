@@ -88,6 +88,12 @@ MeshValidationReport MeshValidator::validate(TetrahedralMesh& mesh) {
                 node_referenced[el.nodes[k]] = true;
             }
         }
+        // Check for duplicate node indices within element
+        if (el.nodes[0] == el.nodes[1] || el.nodes[0] == el.nodes[2] || el.nodes[0] == el.nodes[3] ||
+            el.nodes[1] == el.nodes[2] || el.nodes[1] == el.nodes[3] || el.nodes[2] == el.nodes[3]) {
+            node_oob = true;
+        }
+
         if (node_oob) {
             report.degenerate_elements++;
             continue;
@@ -100,13 +106,12 @@ MeshValidationReport MeshValidator::validate(TetrahedralMesh& mesh) {
 
         double vol = compute_tet_volume(n0, n1, n2, n3);
         if (vol < 0.0) {
-            // Swap node 0 and 1 to fix orientation
-            std::swap(el.nodes[0], el.nodes[1]);
+            // Negative volume indicates inverted element orientation
             vol = -vol;
             report.inverted_elements++;
         }
 
-        if (vol <= 1e-16) {
+        if (!std::isfinite(vol) || vol <= 1e-15) {
             report.degenerate_elements++;
         }
 
@@ -130,7 +135,19 @@ MeshValidationReport MeshValidator::validate(TetrahedralMesh& mesh) {
                 face_valid = false;
             }
         }
-        if (!face_valid || f.area <= 1e-16) {
+        if (f.nodes[0] == f.nodes[1] || f.nodes[1] == f.nodes[2] || f.nodes[0] == f.nodes[2]) {
+            face_valid = false;
+        }
+        if (f.owning_element < 0 || f.owning_element >= n_elems) {
+            face_valid = false;
+        }
+        if (!std::isfinite(f.area) || f.area <= 1e-15) {
+            face_valid = false;
+        }
+        if (!std::isfinite(f.normal[0]) || !std::isfinite(f.normal[1]) || !std::isfinite(f.normal[2])) {
+            face_valid = false;
+        }
+        if (!face_valid) {
             report.invalid_faces++;
         }
     }

@@ -29,7 +29,9 @@ struct HeatSinkParams {
     double heat_source_y_off  = 0.000; ///< Offset from center along Y [m]
     double heat_source_power  = 15.0;  ///< Total heat power [W]
 
-    // Mounting holes (4 corner through-holes)
+    // Mounting holes (4 corner boundary constraint zones)
+    // Note: Modeled parametrically as fixed-temperature boundary clamp zones on the base plate
+    // rather than geometric circular cutouts in the structured hexahedral mesh.
     double hole_diameter = 0.004;      ///< 4 mm diameter [m]
     double hole_margin_x = 0.008;      ///< Distance from X edge [m]
     double hole_margin_y = 0.008;      ///< Distance from Y edge [m]

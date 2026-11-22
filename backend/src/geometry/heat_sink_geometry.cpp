@@ -149,13 +149,11 @@ GeometryValidationResult HeatSinkGeometry::validate() const {
                        2.0 * (f.thickness * f.height);
     }
 
-    double hole_vol = 0.0;
-    if (params_.has_mounting_holes) {
-        double r = params_.hole_diameter * 0.5;
-        hole_vol = 4.0 * (M_PI * r * r * params_.base_thickness);
-    }
-
-    res.total_volume_m3 = base_vol + fin_vol - hole_vol;
+    // Priority 3: In the structured Cartesian-to-tetrahedron discretization,
+    // mounting holes are modeled as parametric boundary constraint regions (fixed-temperature clamp zones)
+    // rather than physical geometric cutouts in the solid base slab.
+    // The volume and surface area represent the actual continuous physical solid.
+    res.total_volume_m3 = base_vol + fin_vol;
     res.heat_source_area_m2 = params_.heat_source_length * params_.heat_source_width;
     // Base surface area minus fin attachments
     double base_top_exposed = params_.base_length * params_.base_width;

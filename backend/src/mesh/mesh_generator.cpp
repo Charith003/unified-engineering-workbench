@@ -111,24 +111,34 @@ TetrahedralMesh MeshGenerator::generate(const MeshGenerationOptions& options) {
     };
 
     // ── 3. Decompose Hexahedral Brick into 5 Conforming Tets ─
+    auto push_tet = [&](int a, int b, int c, int d) {
+        const auto& na = mesh.nodes[a];
+        const auto& nb = mesh.nodes[b];
+        const auto& nc = mesh.nodes[c];
+        const auto& nd = mesh.nodes[d];
+        if (MeshValidator::compute_tet_volume(na, nb, nc, nd) < 0.0) {
+            std::swap(b, c); // Ensure positive orientation
+        }
+        mesh.elements.push_back({ static_cast<int>(mesh.elements.size()), {a, b, c, d}, 0.0, 0.0 });
+    };
+
     auto add_brick_tets = [&](int n0, int n1, int n2, int n3,
                               int n4, int n5, int n6, int n7,
                               bool alternate) {
-        int e_start = static_cast<int>(mesh.elements.size());
         if (!alternate) {
             // Even decomposition: (0,1,3,4), (1,2,3,6), (1,4,5,6), (3,4,6,7), (1,3,4,6)
-            mesh.elements.push_back({ e_start + 0, {n0, n1, n3, n4}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 1, {n1, n2, n3, n6}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 2, {n1, n4, n5, n6}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 3, {n3, n4, n6, n7}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 4, {n1, n3, n4, n6}, 0.0, 0.0 });
+            push_tet(n0, n1, n3, n4);
+            push_tet(n1, n2, n3, n6);
+            push_tet(n1, n4, n5, n6);
+            push_tet(n3, n4, n6, n7);
+            push_tet(n1, n3, n4, n6);
         } else {
-            // Odd decomposition: (0,1,2,5), (0,2,3,7), (0,4,5,7), (2,5,6,7), (0,2,5,7)
-            mesh.elements.push_back({ e_start + 0, {n0, n1, n2, n5}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 1, {n0, n2, n3, n7}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 2, {n0, n4, n5, n7}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 3, {n2, n5, n6, n7}, 0.0, 0.0 });
-            mesh.elements.push_back({ e_start + 4, {n0, n2, n5, n7}, 0.0, 0.0 });
+            // Odd decomposition: (0,1,2,5), (0,2,3,7), (0,4,5,7), (2,5,6,7), (0,5,2,7)
+            push_tet(n0, n1, n2, n5);
+            push_tet(n0, n2, n3, n7);
+            push_tet(n0, n4, n5, n7);
+            push_tet(n2, n5, n6, n7);
+            push_tet(n0, n5, n2, n7);
         }
     };
 
@@ -280,10 +290,15 @@ TetrahedralMesh MeshGenerator::generate(const MeshGenerationOptions& options) {
                 st.area   = norm * 0.5;
             }
 
-            // Boundary Condition Classification
-            if (fc_z <= 1e-6 && geometry_.is_in_heat_source(fc_x, fc_y)) {
+            // Boundary Condition Classification:
+            // Priority 2 Correction: The heat source is located on the top surface of the base plate
+            // at z = base_thickness (tb) with outward normal pointing upwards (+Z).
+            bool is_base_top = (std::abs(fc_z - tb) <= 1e-5) && (st.normal[2] > 0.5);
+            bool is_base_bottom = (fc_z <= 1e-5) && (st.normal[2] < -0.5);
+
+            if (is_base_top && geometry_.is_in_heat_source(fc_x, fc_y)) {
                 st.boundary_type = BoundaryType::HeatSource;
-            } else if (geometry_.is_in_mounting_hole(fc_x, fc_y)) {
+            } else if (is_base_bottom && geometry_.is_in_mounting_hole(fc_x, fc_y)) {
                 st.boundary_type = BoundaryType::FixedTemp;
             } else {
                 st.boundary_type = BoundaryType::Convection;

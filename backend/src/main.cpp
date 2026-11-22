@@ -132,6 +132,20 @@ int main(int argc, char* argv[]) {
         std::string a = argv[i];
         if (a.rfind("--frontend=", 0) == 0) {
             g_frontend_dist = a.substr(11);
+            if (!g_frontend_dist.empty() && g_frontend_dist.front() == '"') {
+                g_frontend_dist = g_frontend_dist.substr(1);
+            }
+            if (!g_frontend_dist.empty() && g_frontend_dist.back() == '"') {
+                g_frontend_dist.pop_back();
+            }
+        }
+    }
+
+    if (g_frontend_dist.empty()) {
+        if (fs::exists("frontend_dist")) {
+            g_frontend_dist = "frontend_dist";
+        } else if (fs::exists("frontend/dist")) {
+            g_frontend_dist = "frontend/dist";
         }
     }
 

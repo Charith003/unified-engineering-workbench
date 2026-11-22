@@ -29,11 +29,13 @@ Solver type: Cholesky (direct), Conjugate Gradient (iterative Krylov), Symmetric
 | Metric              | Symbol          | Description                              |
 |---------------------|-----------------|------------------------------------------|
 | Solve time          | t_median [μs]   | Median wall-clock time over N trials     |
-| Relative residual   | ‖r‖₂/‖F‖₂      | Accuracy of linear system solution       |
-| Max temperature deviation | max|ΔT| [K] | vs Cholesky reference                |
-| Speedup             | S = t_CG / t_x  | Relative to Conjugate Gradient           |
+| Min / Max time      | t_min, t_max    | Trial distribution bounds                |
+| Relative residual   | ‖r‖₂/‖F‖₂      | Computed from original K and F after solve |
+| Max temperature deviation | max|ΔT| [K] | vs Cholesky reference (only if both converged) |
+| Speedup             | S = t_Cholesky / t_solver | Relative to Cholesky direct reference |
 | Memory usage        | Mem [KB]        | Approximate solver working storage       |
 | Iterations          | iter            | (Iterative solvers only)                 |
+| Convergence status  | success/failed  | Strictly `true` only when tolerance met before max_iterations |
 
 ---
 
@@ -87,17 +89,19 @@ Computed after each solve from the returned solution vector.
 **Acceptance thresholds:**
 - Cholesky: r_rel < 1×10⁻¹⁰
 - CG: r_rel < 1×10⁻⁸
-- SSOR GS: r_rel < 0.05 (slower convergence characteristic of stationary methods)
+- SSOR GS: Must meet configured tolerance (default 1×10⁻⁶). If not met before `max_iterations`, the solver reports `success = false`. On 3D FEM matrices with spectral radius ρ ≈ 0.999, SSOR typically reaches r_rel ≈ 0.03 at 5 000 iterations and must honestly report non-convergence.
 
 ### 4.2 Solution Agreement
 
-The Cholesky solution is used as the gold-standard reference. For each iterative solver:
+The Cholesky solution is used as the gold-standard reference **only when Cholesky successfully converges**. If Cholesky fails, no reference is set and max|ΔT| is not computed for any solver.
+
+For each converging iterative solver:
 
 $$\max_i |T_i^{\text{solver}} - T_i^{\text{Cholesky}}|$$
 
 **Acceptance thresholds:**
 - CG vs Cholesky: max|ΔT| < 1×10⁻³ K
-- SSOR GS vs Cholesky: max|ΔT| < 1.0 K
+- SSOR GS vs Cholesky: reported as N/A when SSOR does not converge (expected on typical FEM matrices)
 
 ---
 

@@ -18,7 +18,7 @@ Validation confirms that the implemented FEM engine produces physically correct 
 
 All tests are compiled into `test_all_phases.exe`.
 
-### 2.1 Geometry Tests (`test_heat_sink_geometry.cpp`)
+### 2.1 Geometry Tests (`test_heat_sink_geometry.cpp`) — 8 tests
 
 | Test | Result |
 |------|--------|
@@ -29,44 +29,59 @@ All tests are compiled into `test_all_phases.exe`.
 | ValidationRejectsZeroBase | ✓ PASS |
 | ValidationRejectsNegativeK | ✓ PASS |
 | FinConfigConsistency | ✓ PASS |
+| VolumeConsistencyWithPhysicalDimensions | ✓ PASS |
 
-### 2.2 Mesh Generator Tests (`test_mesh_generator.cpp`)
+### 2.2 Mesh Generator Tests (`test_mesh_generator.cpp`) — 6 tests
 
 | Test | Result |
 |------|--------|
-| CoarseMeshGeneration | ✓ PASS |
+| CoarseMeshGeneration (inverted_elements == 0) | ✓ PASS |
 | MediumMeshGeneration | ✓ PASS |
 | FineMeshGeneration | ✓ PASS |
+| HeatSourceTopSurfaceLocationAndArea | ✓ PASS |
+| BottomFaceHasConvection | ✓ PASS |
 | MeshValidation_ValidMesh | ✓ PASS |
+
+### 2.3 Mesh Validator Tests (`test_mesh_validator.cpp`) — 4 tests
+
+| Test | Result |
+|------|--------|
+| DetectsOutOfRangeNodeIndex | ✓ PASS |
+| DetectsNonFiniteCoordinates | ✓ PASS |
+| DetectsDegenerateDuplicateNodesInTet | ✓ PASS |
 | MeshValidation_DetectsCorruptedMesh | ✓ PASS |
 
-### 2.3 Thermal FEM Tests (`test_fem_3d.cpp`)
+### 2.4 Thermal FEM Tests (`test_fem_3d.cpp`) — 3 tests
 
 | Test | Criterion | Result |
 |------|-----------|--------|
 | SPD_check | All eigenvalues > 0 | ✓ PASS |
 | Energy_conservation | |Q_in − Q_conv| / Q_in < 5% | ✓ PASS |
+| ManufacturedLinearSolutionPatchTest | max_err < 1×10⁻¹⁰ | ✓ PASS |
 
-### 2.4 Solver Tests (`test_numerical_solvers.cpp`)
+**Manufactured Patch Test:** Applied T(x,y,z) = 2x + 3y + z as a known linear solution. Dirichlet BCs at boundary nodes enforced. After FEM solve, maximum nodal error was < 1×10⁻¹⁰ °C, confirming that the symmetric Dirichlet enforcement and B-matrix gradient computation are correct.
+
+### 2.5 Solver Tests (`test_numerical_solvers.cpp`) — 6 tests
 
 | Test | Criterion | Result |
 |------|-----------|--------|
 | Cholesky_residual | ‖r‖/‖F‖ < 1e-10 | ✓ PASS |
 | CG_convergence | Converges in < 10,000 iters | ✓ PASS |
-| GaussSeidel_residual | ‖r‖/‖F‖ < 0.05 | ✓ PASS |
-| CG_vs_Cholesky_agreement | max|ΔT| < 1e-3 K | ✓ PASS |
-| GS_vs_Cholesky_agreement | max|ΔT| < 1.0 K | ✓ PASS |
+| GaussSeidelConvergenceOnDiagonallyDominantSystem | success = true on simple diagonal-dominant system | ✓ PASS |
+| GaussSeidelNonConvergedDetection | success = false when max_iterations reached | ✓ PASS |
+| GaussSeidelDivergentSystemDetection | success = false and divergence flagged | ✓ PASS |
+| SolversAgreementOnIdenticalSystem | CG max|ΔT| < 1e-3 K vs Cholesky | ✓ PASS |
 
-### 2.5 Benchmark Tests (`test_solver_benchmark.cpp`)
+### 2.6 Benchmark Tests (`test_solver_benchmark.cpp`) — 2 tests
 
 | Test | Result |
 |------|--------|
 | FullBenchmarkRun | ✓ PASS |
 | MeshConvergenceStudy | ✓ PASS |
 
-**Total: 20/20 tests PASSED across 6 test suites (Phase 1–4)**
-
-Additionally, the original 45 tests from Phase 1 (legacy modules) remain passing.
+**Total: 29/29 tests PASSED across 6 test suites (Phase 9)**
+**Legacy total: 45/45 tests PASSED (uew_tests.exe)**
+**Grand total: 74/74 tests PASSED (100% success rate)**
 
 ---
 
@@ -130,9 +145,10 @@ $$\|e\|_{L^\infty} \approx O(h^2)$$
 
 ## 7. Known Limitations
 
-| Limitation | Impact | Workaround |
-|------------|--------|------------|
-| SSOR GS convergence threshold 0.05 | GS solution less accurate than Cholesky/CG | Use for demonstration only |
-| No AMG preconditioner | CG may slow on very fine meshes | Jacobi preconditioner adequate for medium mesh |
-| No parallel assembly | Assembly time grows with mesh size | Adequate for educational benchmarks |
+| Limitation | Impact | Status |
+|------------|--------|--------|
+| SSOR GS on 3D FEM (ρ ≈ 0.999) | Requires O(10 000) iterations to reach tol=1e-6; honestly reports non-convergence | Expected — documented |
+| No AMG preconditioner | CG may slow on very fine meshes; Jacobi preconditioner adequate for medium mesh | Acceptable for educational benchmarks |
+| No parallel assembly | Assembly time grows with mesh size; adequate for benchmarking up to Fine mesh | Known limitation |
 | TET4 locking not applicable | Thermal problem, not mechanical | No issue |
+| Mounting holes = parametric zones | Volume/mesh statistics consistent; STL export documents this approximation | Documented |

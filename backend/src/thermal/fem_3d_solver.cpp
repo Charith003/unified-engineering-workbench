@@ -179,31 +179,38 @@ void FEM3DSolver::apply_dirichlet_bc(
         unique_fixed[fn.first] = fn.second;
     }
 
-    // Symmetric elimination
+    // Step 1: Symmetric elimination: subtract column contributions from RHS
     for (const auto& kv : unique_fixed) {
-        size_t node_idx = kv.first;
+        size_t col = kv.first;
         double fixed_val = kv.second;
 
-        for (Eigen::SparseMatrix<double>::InnerIterator it(K, node_idx); it; ++it) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(K, col); it; ++it) {
             size_t row = it.row();
-            if (row != node_idx && unique_fixed.find(row) == unique_fixed.end()) {
+            if (row != col && unique_fixed.find(row) == unique_fixed.end()) {
                 F(row) -= it.value() * fixed_val;
             }
         }
     }
 
-    // Zero out rows and columns, set diagonal to 1.0, and F(node_idx) = fixed_val
-    for (const auto& kv : unique_fixed) {
-        size_t node_idx = kv.first;
-        double fixed_val = kv.second;
-
-        for (Eigen::SparseMatrix<double>::InnerIterator it(K, node_idx); it; ++it) {
-            it.valueRef() = 0.0;
+    // Step 2: Symmetrically zero out both row and column in Column-Major sparse storage
+    for (int col = 0; col < K.outerSize(); ++col) {
+        bool col_fixed = (unique_fixed.find(col) != unique_fixed.end());
+        for (Eigen::SparseMatrix<double>::InnerIterator it(K, col); it; ++it) {
+            size_t row = it.row();
+            bool row_fixed = (unique_fixed.find(row) != unique_fixed.end());
+            if (col_fixed || row_fixed) {
+                if (row == static_cast<size_t>(col) && col_fixed) {
+                    it.valueRef() = 1.0;
+                } else {
+                    it.valueRef() = 0.0;
+                }
+            }
         }
+    }
 
-        // Set diagonal to 1.0
-        K.coeffRef(node_idx, node_idx) = 1.0;
-        F(node_idx) = fixed_val;
+    // Step 3: Set RHS for fixed nodes
+    for (const auto& kv : unique_fixed) {
+        F(kv.first) = kv.second;
     }
 }
 

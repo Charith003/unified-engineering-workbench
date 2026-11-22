@@ -63,3 +63,19 @@ TEST(HeatSinkGeometry, GeneratesValidAsciiSTL) {
     EXPECT_NE(stl.find("facet normal"), std::string::npos);
     EXPECT_NE(stl.find("endsolid test_heat_sink"), std::string::npos);
 }
+
+TEST(HeatSinkGeometry, VolumeConsistencyWithPhysicalDimensions) {
+    // Priority 3 Test: Verify geometric volume matches analytical sum of base and fins
+    HeatSinkGeometry hs;
+    auto val = hs.validate();
+    const auto& p = hs.params();
+
+    double expected_base_vol = p.base_length * p.base_width * p.base_thickness;
+    double expected_fin_vol = 0.0;
+    for (const auto& f : p.fins) {
+        expected_fin_vol += p.base_length * f.thickness * f.height;
+    }
+    double expected_total = expected_base_vol + expected_fin_vol;
+
+    EXPECT_NEAR(val.total_volume_m3, expected_total, 1e-9);
+}

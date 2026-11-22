@@ -93,11 +93,30 @@ Stored as `Eigen::SparseMatrix<double>` via triplet insertion.
 Symmetric enforcement (preserves SPD property):
 
 For a constrained DOF k with prescribed value T_k:
-1. Zero row k and column k.
+1. Zero row k and column k (both row and column entries, in a ColMajor sparse matrix this requires a full outer-loop pass).
 2. Set K[k][k] = 1.
 3. Set F[k] = T_k.
 4. Subtract column contributions from F for unconstrained rows:
    F[i] -= K_saved[i][k] × T_k.
+
+**Correctness note:** In Eigen `ColMajor` sparse storage, zeroing only columns leaves row off-diagonals intact. The implementation symmetrically zeros both the row entries (scanning all column outer vectors) and column entries in a single pass. This was verified by a manufactured linear-solution patch test with error < 1×10⁻¹⁰.
+
+---
+
+## 2.7 Heat Source Boundary Location
+
+The heat source (Neumann flux) patch is applied to the **top surface of the aluminum base plate**, at z = base_thickness (z = 8 mm), with outward normal +Z. The heat flux applied is:
+
+$$q'' = P / A_{\text{src}} \quad [\text{W/m}^2]$$
+
+where A_src = heat_source_length × heat_source_width = 0.030 × 0.025 m².
+
+**Boundary face classification rule:**
+- Heat source: `|fc_z − base_thickness| ≤ 1×10⁻⁵` AND `normal[z] > 0.5` AND face centroid within heat source x–y patch.
+- Convection: all remaining exposed surfaces (fin surfaces, base bottom, fin tips).
+- Not the bottom face (z = 0).
+
+This corrects the previous erroneous assignment to the bottom face (z ≤ 1×10⁻⁶).
 
 ---
 
@@ -144,9 +163,16 @@ $$x_i^{(k+1)} = \frac{1}{K_{ii}} \left( F_i - \sum_{j < i} K_{ij} x_j^{(k+1)} - 
 **Backward sweep** (i = n−1 → 0):
 $$x_i^{(k+1)} = \frac{1}{K_{ii}} \left( F_i - \sum_{j < i} K_{ij} x_j^{(k)} - \sum_{j > i} K_{ij} x_j^{(k+1)} \right)$$
 
-Iterates until ‖r‖₂ < 0.05 or 4000 iterations. SSOR improves convergence significantly over forward-only GS on FEM matrices.
+**Convergence criterion (strict):** ‖r‖₂ / ‖F‖₂ < configured tolerance (default 1×10⁻⁶). The solver **only** reports `success = true` when this criterion is strictly met before reaching max iterations.
 
-**Use:** Demonstrates classical iterative solvers; slower convergence than CG for ill-conditioned FEM matrices.
+**Non-convergence policy:**
+- Reaching `max_iterations` returns `success = false` with message "Max iterations reached".
+- Divergence detection: if `‖r‖ > 1×10⁶ × ‖r₀‖` or any `x_i` becomes non-finite, the solver halts immediately and reports `success = false`.
+- The old permissive condition `success = (converged || residual_norm < 0.05)` has been removed.
+
+**Note on 3D FEM matrices:** For large 3D elliptic systems (n ≈ 1 000–20 000 DOFs with h = 25 W/(m²K)), the spectral radius ρ ≈ 0.999, requiring O(10 000) iterations to reach ‖r‖/‖b‖ < 10⁻⁶. SSOR typically reaches ‖r‖/‖b‖ ≈ 0.03 at 5 000 iterations and must honestly report non-convergence.
+
+**Use:** Demonstrates classical stationary iterative solvers and their limitations on stiff 3D FEM matrices. Compare with CG, which converges in far fewer iterations.
 
 ---
 

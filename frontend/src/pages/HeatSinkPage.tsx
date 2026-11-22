@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { Layers, Play, Download, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Layers, Play, Download, AlertCircle, CheckCircle, Info, Eye, EyeOff, RotateCcw, Box } from 'lucide-react';
 import {
   generateHeatSinkGeometry,
   generateHeatSinkMesh,
@@ -10,7 +12,7 @@ import {
 import type {
   HeatSinkGeometryResult, HeatSinkMeshResult,
   HeatSinkThermalResult, HeatSinkBenchmarkResult,
-  HeatSinkConvergenceResult
+  HeatSinkConvergenceResult, HeatSinkMeshNode, HeatSinkMeshFace
 } from '../types/api';
 import Plot from 'react-plotly.js';
 
@@ -238,7 +240,7 @@ export default function HeatSinkPage() {
       {/* Tab Content */}
       {activeTab === 'geometry' && <GeometryTab result={geomResult} />}
       {activeTab === 'mesh' && <MeshTab result={meshResult} />}
-      {activeTab === 'thermal' && <ThermalTab result={thermalResult} />}
+      {activeTab === 'thermal' && <ThermalTab result={thermalResult} meshResult={meshResult} />}
       {activeTab === 'benchmark' && <BenchmarkTab result={benchResult} />}
       {activeTab === 'convergence' && <ConvergenceTab result={convResult} />}
     </div>
@@ -316,6 +318,426 @@ function GeometryTab({ result }: { result: HeatSinkGeometryResult | null }) {
   );
 }
 
+// ─── 3D FEA Heat Sink & Temperature Viewer ──────────────────────────────────
+interface ViewerProps {
+  nodes?: HeatSinkMeshNode[];
+  boundaryFaces?: HeatSinkMeshFace[];
+  nodalTemperatures?: number[];
+  minTemp?: number;
+  maxTemp?: number;
+  mode: 'mesh' | 'thermal';
+}
+
+function turboColor(t: number): THREE.Color {
+  const v = Math.max(0, Math.min(1, t));
+  let r = 0, g = 0, b = 0;
+  if (v <= 0.25) {
+    const f = v / 0.25;
+    r = 0; g = 0.8 * f; b = 0.7 + 0.3 * f;
+  } else if (v <= 0.5) {
+    const f = (v - 0.25) / 0.25;
+    r = 0; g = 0.8 + 0.1 * f; b = 1.0 - 0.8 * f;
+  } else if (v <= 0.75) {
+    const f = (v - 0.5) / 0.25;
+    r = f; g = 0.9 - 0.05 * f; b = 0.2 * (1.0 - f);
+  } else {
+    const f = (v - 0.75) / 0.25;
+    r = 1.0 - 0.1 * f; g = 0.85 * (1.0 - f); b = 0;
+  }
+  return new THREE.Color(r, g, b);
+}
+
+function boundaryColor(bt: string): THREE.Color {
+  switch (bt) {
+    case 'HeatSource': return new THREE.Color(0xF97316); // Bright Orange
+    case 'Convection': return new THREE.Color(0x36B8C5); // Teal / Cyan
+    case 'FixedTemp':  return new THREE.Color(0xB7F34A); // Lime Accent
+    case 'Adiabatic':  return new THREE.Color(0x94A3B8); // Slate
+    default:           return new THREE.Color(0x64748B);
+  }
+}
+
+function HeatSink3DViewer({
+  nodes,
+  boundaryFaces,
+  nodalTemperatures,
+  minTemp = 25,
+  maxTemp = 75,
+  mode
+}: ViewerProps) {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const [wireframeVisible, setWireframeVisible] = useState(mode === 'mesh');
+  const [surfaceVisible, setSurfaceVisible] = useState(true);
+  const [hoverInfo, setHoverInfo] = useState<{
+    id: number;
+    x: number;
+    y: number;
+    z: number;
+    temp?: number;
+    boundaryType?: string;
+  } | null>(null);
+
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const surfaceMeshRef = useRef<THREE.Mesh | null>(null);
+  const wireMeshRef = useRef<THREE.LineSegments | null>(null);
+  const resetCameraPos = useRef<THREE.Vector3>(new THREE.Vector3());
+
+  // Update visibility on state changes
+  useEffect(() => {
+    if (wireMeshRef.current) wireMeshRef.current.visible = wireframeVisible;
+  }, [wireframeVisible]);
+
+  useEffect(() => {
+    if (surfaceMeshRef.current) surfaceMeshRef.current.visible = surfaceVisible;
+  }, [surfaceVisible]);
+
+  useEffect(() => {
+    if (!mountRef.current || !nodes || nodes.length === 0 || !boundaryFaces || boundaryFaces.length === 0) {
+      return;
+    }
+    const container = mountRef.current;
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 380;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0e1410, 1.0);
+    container.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    cameraRef.current = camera;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.85);
+    dirLight1.position.set(20, 40, 30);
+    scene.add(dirLight1);
+    const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+    dirLight2.position.set(-20, -30, -20);
+    scene.add(dirLight2);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controlsRef.current = controls;
+
+    // Build geometry from actual backend nodes and boundary faces
+    const nodeMap = new Map<number, HeatSinkMeshNode>();
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+
+    for (const nd of nodes) {
+      nodeMap.set(nd.id, nd);
+      if (nd.x < minX) minX = nd.x; if (nd.x > maxX) maxX = nd.x;
+      if (nd.y < minY) minY = nd.y; if (nd.y > maxY) maxY = nd.y;
+      if (nd.z < minZ) minZ = nd.z; if (nd.z > maxZ) maxZ = nd.z;
+    }
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 0.1;
+    const scale = 5.0 / maxDim;
+
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const tSpan = Math.max(1e-4, maxTemp - minTemp);
+
+    for (const face of boundaryFaces) {
+      const n0 = nodeMap.get(face.nodes[0]);
+      const n1 = nodeMap.get(face.nodes[1]);
+      const n2 = nodeMap.get(face.nodes[2]);
+      if (!n0 || !n1 || !n2) continue;
+
+      // Coordinate mapping: Z is height (up in Three.js = Y), X is right (X), Y is depth (-Z)
+      positions.push((n0.x - cx) * scale, (n0.z - cz) * scale, -(n0.y - cy) * scale);
+      positions.push((n1.x - cx) * scale, (n1.z - cz) * scale, -(n1.y - cy) * scale);
+      positions.push((n2.x - cx) * scale, (n2.z - cz) * scale, -(n2.y - cy) * scale);
+
+      if (mode === 'thermal' && nodalTemperatures && nodalTemperatures.length > 0) {
+        const t0 = nodalTemperatures[n0.id] ?? minTemp;
+        const t1 = nodalTemperatures[n1.id] ?? minTemp;
+        const t2 = nodalTemperatures[n2.id] ?? minTemp;
+        const c0 = turboColor((t0 - minTemp) / tSpan);
+        const c1 = turboColor((t1 - minTemp) / tSpan);
+        const c2 = turboColor((t2 - minTemp) / tSpan);
+        colors.push(c0.r, c0.g, c0.b, c1.r, c1.g, c1.b, c2.r, c2.g, c2.b);
+      } else {
+        const c = boundaryColor(face.boundary_type);
+        colors.push(c.r, c.g, c.b, c.r, c.g, c.b, c.r, c.g, c.b);
+      }
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geom.computeVertexNormals();
+
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      roughness: 0.35,
+      metalness: 0.15,
+    });
+    const surfaceMesh = new THREE.Mesh(geom, mat);
+    surfaceMesh.visible = surfaceVisible;
+    scene.add(surfaceMesh);
+    surfaceMeshRef.current = surfaceMesh;
+
+    // Crisp wireframe overlay
+    const wireGeo = new THREE.WireframeGeometry(geom);
+    const wireMat = new THREE.LineBasicMaterial({
+      color: 0xB7F34A,
+      opacity: 0.25,
+      transparent: true
+    });
+    const wireMesh = new THREE.LineSegments(wireGeo, wireMat);
+    wireMesh.visible = wireframeVisible;
+    scene.add(wireMesh);
+    wireMeshRef.current = wireMesh;
+
+    // Ground orientation grid
+    const grid = new THREE.GridHelper(8, 16, 0x223522, 0x142014);
+    grid.position.y = (minZ - cz) * scale;
+    scene.add(grid);
+
+    // Initial camera position (isometric viewpoint)
+    camera.position.set(6.5, 5.0, 7.5);
+    camera.lookAt(0, 0, 0);
+    resetCameraPos.current.copy(camera.position);
+    controls.update();
+
+    // Raycasting for interactive hover inspection
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    const onPointerMove = (evt: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      if (surfaceMeshRef.current && surfaceMeshRef.current.visible) {
+        const hits = raycaster.intersectObject(surfaceMeshRef.current);
+        if (hits.length > 0) {
+          const hit = hits[0];
+          const faceIdx = hit.faceIndex;
+          if (faceIdx !== undefined && faceIdx !== null && faceIdx < boundaryFaces.length) {
+            const face = boundaryFaces[faceIdx as number];
+            let closestId = face.nodes[0];
+            let minDist = Infinity;
+            for (const nid of face.nodes) {
+              const nd = nodeMap.get(nid);
+              if (nd) {
+                const px = (nd.x - cx) * scale;
+                const py = (nd.z - cz) * scale;
+                const pz = -(nd.y - cy) * scale;
+                const dx = px - hit.point.x;
+                const dy = py - hit.point.y;
+                const dz = pz - hit.point.z;
+                const dist = dx * dx + dy * dy + dz * dz;
+                if (dist < minDist) {
+                  minDist = dist;
+                  closestId = nid;
+                }
+              }
+            }
+            const closest = nodeMap.get(closestId);
+            if (closest) {
+              setHoverInfo({
+                id: closestId,
+                x: closest.x * 1000,
+                y: closest.y * 1000,
+                z: closest.z * 1000,
+                temp: nodalTemperatures && nodalTemperatures.length > closestId ? nodalTemperatures[closestId] : undefined,
+                boundaryType: face.boundary_type
+              });
+              return;
+            }
+          }
+        }
+      }
+      setHoverInfo(null);
+    };
+
+    const onPointerLeave = () => setHoverInfo(null);
+
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+
+    let animId: number;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const handleResize = () => {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w > 0 && h > 0) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
+      geom.dispose();
+      mat.dispose();
+      wireGeo.dispose();
+      wireMat.dispose();
+      renderer.dispose();
+    };
+  }, [nodes, boundaryFaces, nodalTemperatures, minTemp, maxTemp, mode]);
+
+  const handleReset = () => {
+    if (cameraRef.current && controlsRef.current) {
+      cameraRef.current.position.copy(resetCameraPos.current);
+      controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.update();
+    }
+  };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid #233523', background: '#0e1410' }}>
+      {/* 3D WebGL Canvas */}
+      <div ref={mountRef} style={{ width: '100%', height: 380, cursor: 'grab' }} />
+
+      {/* Top Controls Overlay */}
+      <div style={{
+        position: 'absolute', top: 10, left: 12, right: 12,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        pointerEvents: 'none'
+      }}>
+        <div style={{
+          background: 'rgba(16, 24, 18, 0.85)', backdropFilter: 'blur(4px)',
+          border: '1px solid #2a3d2a', borderRadius: 6, padding: '4px 10px',
+          color: '#B7F34A', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6
+        }}>
+          <Box size={14} />
+          {mode === 'thermal' ? '3D FEA Nodal Temperature Field' : '3D Computational Boundary Mesh'}
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+          <button
+            onClick={() => setWireframeVisible(v => !v)}
+            style={{
+              background: wireframeVisible ? '#B7F34A' : 'rgba(20, 30, 22, 0.85)',
+              color: wireframeVisible ? '#101810' : '#E5EAE2',
+              border: '1px solid #2a3d2a', borderRadius: 5, padding: '4px 8px',
+              fontSize: 11, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+            }}>
+            {wireframeVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+            Wireframe
+          </button>
+          <button
+            onClick={() => setSurfaceVisible(v => !v)}
+            style={{
+              background: surfaceVisible ? '#36B8C5' : 'rgba(20, 30, 22, 0.85)',
+              color: surfaceVisible ? '#101810' : '#E5EAE2',
+              border: '1px solid #2a3d2a', borderRadius: 5, padding: '4px 8px',
+              fontSize: 11, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+            }}>
+            {surfaceVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+            Surface
+          </button>
+          <button
+            onClick={handleReset}
+            style={{
+              background: 'rgba(20, 30, 22, 0.85)', color: '#E5EAE2',
+              border: '1px solid #2a3d2a', borderRadius: 5, padding: '4px 8px',
+              fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+            }}>
+            <RotateCcw size={12} /> Reset View
+          </button>
+        </div>
+      </div>
+
+      {/* Hover Inspection HUD Overlay */}
+      <div style={{
+        position: 'absolute', bottom: mode === 'thermal' ? 62 : 44, left: 12,
+        background: 'rgba(14, 20, 16, 0.90)', backdropFilter: 'blur(4px)',
+        border: '1px solid #2a3d2a', borderRadius: 6, padding: '5px 10px',
+        fontSize: 11, color: '#C8D4C8', pointerEvents: 'none'
+      }}>
+        {hoverInfo ? (
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span>Node <strong style={{ color: '#B7F34A' }}>#{hoverInfo.id}</strong></span>
+            <span>Coord: <strong>({hoverInfo.x.toFixed(1)}, {hoverInfo.y.toFixed(1)}, {hoverInfo.z.toFixed(1)}) mm</strong></span>
+            {hoverInfo.temp !== undefined && (
+              <span>Temp: <strong style={{ color: '#F97316' }}>{hoverInfo.temp.toFixed(2)} °C</strong></span>
+            )}
+            {hoverInfo.boundaryType && (
+              <span>Boundary: <strong>{hoverInfo.boundaryType}</strong></span>
+            )}
+          </div>
+        ) : (
+          <span style={{ color: '#758078' }}>Hover cursor over surface to inspect nodal coordinates & temperature</span>
+        )}
+      </div>
+
+      {/* Legend Bar Overlay */}
+      <div style={{
+        position: 'absolute', bottom: 10, left: 12, right: 12,
+        background: 'rgba(14, 20, 16, 0.92)', backdropFilter: 'blur(4px)',
+        border: '1px solid #2a3d2a', borderRadius: 6, padding: '6px 12px',
+        display: 'flex', flexDirection: 'column', gap: 4
+      }}>
+        {mode === 'thermal' ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#A0B0A0', marginBottom: 2 }}>
+              <span style={{ color: '#60A5FA', fontWeight: 600 }}>T_min: {minTemp.toFixed(1)} °C</span>
+              <span>{(minTemp + (maxTemp - minTemp) * 0.25).toFixed(1)} °C</span>
+              <span>{(minTemp + (maxTemp - minTemp) * 0.50).toFixed(1)} °C</span>
+              <span>{(minTemp + (maxTemp - minTemp) * 0.75).toFixed(1)} °C</span>
+              <span style={{ color: '#F87171', fontWeight: 600 }}>T_max: {maxTemp.toFixed(1)} °C</span>
+            </div>
+            <div style={{
+              height: 10, borderRadius: 3,
+              background: 'linear-gradient(to right, #0000ff 0%, #00ffff 25%, #00ff00 50%, #ffff00 75%, #ff0000 100%)',
+              border: '1px solid #3a4d3a'
+            }} />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', fontSize: 11 }}>
+            <span style={{ color: '#758078', fontWeight: 600 }}>Boundary Conditions:</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#F97316' }} />
+              <span style={{ color: '#E5EAE2' }}>Heat Source (Base Top)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#36B8C5' }} />
+              <span style={{ color: '#E5EAE2' }}>Convection (Fins & Base)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#B7F34A' }} />
+              <span style={{ color: '#E5EAE2' }}>Fixed Temp</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: '#94A3B8' }} />
+              <span style={{ color: '#E5EAE2' }}>Adiabatic</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Mesh Tab ────────────────────────────────────────────────────────────────
 function MeshTab({ result }: { result: HeatSinkMeshResult | null }) {
   if (!result) return <EmptyState label="Click 'Generate Mesh' to generate the tetrahedral FEM mesh" />;
@@ -329,6 +751,21 @@ function MeshTab({ result }: { result: HeatSinkMeshResult | null }) {
 
   return (
     <div>
+      {/* 3D Tetrahedral Mesh Viewer */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span><span className="accent-dot" />Interactive 3D Finite Element Mesh</span>
+          <span style={{ fontSize: 11, color: '#758078', fontWeight: 400 }}>
+            {result.node_count.toLocaleString()} nodes · {result.element_count.toLocaleString()} tets · {result.boundary_face_count.toLocaleString()} faces
+          </span>
+        </div>
+        <HeatSink3DViewer
+          nodes={result.nodes}
+          boundaryFaces={result.boundary_faces}
+          mode="mesh"
+        />
+      </div>
+
       <div className="grid-2" style={{ gap: 16, marginBottom: 16 }}>
         <div className="card">
           <div className="card-title"><span className="accent-dot" />Mesh Statistics</div>
@@ -401,7 +838,13 @@ function MeshTab({ result }: { result: HeatSinkMeshResult | null }) {
 }
 
 // ─── Thermal Tab ─────────────────────────────────────────────────────────────
-function ThermalTab({ result }: { result: HeatSinkThermalResult | null }) {
+function ThermalTab({
+  result,
+  meshResult
+}: {
+  result: HeatSinkThermalResult | null;
+  meshResult: HeatSinkMeshResult | null;
+}) {
   if (!result) return <EmptyState label="Click 'Run Thermal Solve' to execute the 3D FEM simulation" />;
 
   const nTemp = result.nodal_temperatures;
@@ -414,8 +857,31 @@ function ThermalTab({ result }: { result: HeatSinkThermalResult | null }) {
     nTemp.filter(t => t >= b && (i === histBins - 1 ? t <= b + step : t < b + step)).length
   );
 
+  const displayNodes = result.nodes ?? meshResult?.nodes ?? [];
+  const displayFaces = result.boundary_faces ?? meshResult?.boundary_faces ?? [];
+
   return (
     <div>
+      {/* 3D Thermal Field Viewer */}
+      {displayNodes.length > 0 && displayFaces.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span><span className="accent-dot" />3D Thermal Distribution (FEA Temperature Field)</span>
+            <span style={{ fontSize: 11, color: '#758078', fontWeight: 400 }}>
+              Solver: <strong>{result.solver_name.split(' (')[0]}</strong> · T: [{tMin.toFixed(1)}°C – {tMax.toFixed(1)}°C]
+            </span>
+          </div>
+          <HeatSink3DViewer
+            nodes={displayNodes}
+            boundaryFaces={displayFaces}
+            nodalTemperatures={nTemp}
+            minTemp={tMin}
+            maxTemp={tMax}
+            mode="thermal"
+          />
+        </div>
+      )}
+
       <div className="grid-4" style={{ gap: 12, marginBottom: 16 }}>
         {[
           { label: 'Min Temperature', value: `${result.min_temperature_c.toFixed(2)} °C`, accent: '#36B8C5' },

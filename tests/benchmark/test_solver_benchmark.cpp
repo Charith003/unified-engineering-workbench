@@ -30,8 +30,12 @@ TEST(SolverBenchmark, FullBenchmarkRun) {
     EXPECT_GT(report.thermal_resistance_k_w, 0.0);
     EXPECT_LT(report.energy_balance_error_percent, 5.0);
 
+    EXPECT_TRUE(report.solvers[0].success); // Cholesky reference succeeds
+    EXPECT_TRUE(report.solvers[1].success); // Conjugate Gradient succeeds
+    // Gauss-Seidel accurately reports its convergence/iteration status without fabricated success
+    EXPECT_FALSE(report.solvers[2].status_message.empty());
+
     for (const auto& s : report.solvers) {
-        EXPECT_TRUE(s.success);
         EXPECT_GT(s.median_total_time_ms, 0.0);
         EXPECT_EQ(s.trial_times_ms.size(), 3);
     }

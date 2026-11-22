@@ -65,13 +65,80 @@ TEST(MeshGenerator, BoundaryConditionTagging) {
 
     int conv_count = 0;
     int heat_src_count = 0;
+    double tb = geom.params().base_thickness;
+
     for (const auto& tri : mesh.boundary_faces) {
         if (tri.boundary_type == BoundaryType::Convection) conv_count++;
-        if (tri.boundary_type == BoundaryType::HeatSource) heat_src_count++;
+        if (tri.boundary_type == BoundaryType::HeatSource) {
+            heat_src_count++;
+            // Priority 2 Regression Check: Heat source faces MUST be on the top surface of the base plate (z = tb)
+            const auto& p0 = mesh.nodes[tri.nodes[0]];
+            const auto& p1 = mesh.nodes[tri.nodes[1]];
+            const auto& p2 = mesh.nodes[tri.nodes[2]];
+            double avg_z = (p0.z + p1.z + p2.z) / 3.0;
+            EXPECT_NEAR(avg_z, tb, 1e-4);
+            EXPECT_GT(tri.normal[2], 0.5); // Outward normal pointing +Z
+        }
     }
 
     EXPECT_GT(conv_count, 0);
     EXPECT_GT(heat_src_count, 0);
+}
+
+TEST(MeshGenerator, HeatSourceTopSurfaceLocationAndArea) {
+    HeatSinkGeometry geom;
+    MeshGenerator gen(geom);
+    MeshGenerationOptions opts;
+    opts.resolution = MeshResolution::Medium;
+    auto mesh = gen.generate(opts);
+
+    double tb = geom.params().base_thickness;
+    double heat_src_area = 0.0;
+    int heat_src_faces = 0;
+
+    for (const auto& tri : mesh.boundary_faces) {
+        if (tri.boundary_type == BoundaryType::HeatSource) {
+            heat_src_faces++;
+            heat_src_area += tri.area;
+
+            // Confirm every heat source face is at base top plate z = tb
+            for (int k = 0; k < 3; ++k) {
+                EXPECT_NEAR(mesh.nodes[tri.nodes[k]].z, tb, 1e-4);
+            }
+        }
+    }
+
+    EXPECT_GT(heat_src_faces, 0);
+    EXPECT_GT(heat_src_area, 0.0);
+    // Area must be bounded by the nominal 30 x 25 mm footprint (0.00075 m^2)
+    EXPECT_LE(heat_src_area, geom.params().heat_source_length * geom.params().heat_source_width + 1e-6);
+}
+
+TEST(MeshGenerator, BottomFaceHasConvection) {
+    HeatSinkGeometry geom;
+    MeshGenerator gen(geom);
+    MeshGenerationOptions opts;
+    opts.resolution = MeshResolution::Coarse;
+    auto mesh = gen.generate(opts);
+
+    int bottom_conv_count = 0;
+    for (const auto& tri : mesh.boundary_faces) {
+        const auto& p0 = mesh.nodes[tri.nodes[0]];
+        const auto& p1 = mesh.nodes[tri.nodes[1]];
+        const auto& p2 = mesh.nodes[tri.nodes[2]];
+        double avg_z = (p0.z + p1.z + p2.z) / 3.0;
+
+        // Bottom face at z = 0 with normal -Z
+        if (avg_z <= 1e-5 && tri.normal[2] < -0.5) {
+            // Must be convection (or fixed temp if mounting hole clamped)
+            EXPECT_TRUE(tri.boundary_type == BoundaryType::Convection ||
+                        tri.boundary_type == BoundaryType::FixedTemp);
+            if (tri.boundary_type == BoundaryType::Convection) {
+                bottom_conv_count++;
+            }
+        }
+    }
+    EXPECT_GT(bottom_conv_count, 0);
 }
 
 TEST(MeshValidator, DetectsCorruptedMesh) {
@@ -89,4 +156,54 @@ TEST(MeshValidator, DetectsCorruptedMesh) {
     auto result = MeshValidator::validate(mesh);
     EXPECT_FALSE(result.is_valid);
     EXPECT_GT(result.inverted_elements, 0);
+}
+
+TEST(MeshValidator, DetectsOutOfRangeNodeIndex) {
+    HeatSinkGeometry geom;
+    MeshGenerator gen(geom);
+    MeshGenerationOptions opts;
+    opts.resolution = MeshResolution::Coarse;
+    auto mesh = gen.generate(opts);
+
+    // Corrupt an element by assigning out-of-range node index
+    if (!mesh.elements.empty()) {
+        mesh.elements[0].nodes[0] = 999999;
+    }
+
+    auto result = MeshValidator::validate(mesh);
+    EXPECT_FALSE(result.is_valid);
+}
+
+TEST(MeshValidator, DetectsNonFiniteCoordinates) {
+    HeatSinkGeometry geom;
+    MeshGenerator gen(geom);
+    MeshGenerationOptions opts;
+    opts.resolution = MeshResolution::Coarse;
+    auto mesh = gen.generate(opts);
+
+    // Corrupt a node by injecting NaN
+    if (!mesh.nodes.empty()) {
+        mesh.nodes[0].x = std::numeric_limits<double>::quiet_NaN();
+    }
+
+    auto result = MeshValidator::validate(mesh);
+    EXPECT_FALSE(result.is_valid);
+    EXPECT_GT(result.non_finite_nodes, 0);
+}
+
+TEST(MeshValidator, DetectsDegenerateDuplicateNodesInTet) {
+    HeatSinkGeometry geom;
+    MeshGenerator gen(geom);
+    MeshGenerationOptions opts;
+    opts.resolution = MeshResolution::Coarse;
+    auto mesh = gen.generate(opts);
+
+    // Corrupt an element with duplicate nodes (zero volume)
+    if (!mesh.elements.empty()) {
+        mesh.elements[0].nodes[1] = mesh.elements[0].nodes[0];
+    }
+
+    auto result = MeshValidator::validate(mesh);
+    EXPECT_FALSE(result.is_valid);
+    EXPECT_GT(result.degenerate_elements, 0);
 }
