@@ -57,7 +57,13 @@ N consecutive timed solves are performed. Each trial:
 4. Record end time.
 5. Store elapsed duration in microseconds.
 
-### 3.3 Statistic Reported: Median
+### 3.3 Timing Breakdown & Metrics Reported
+
+To avoid misrepresenting iterative solver setup as direct matrix factorization, the benchmark rigorously separates:
+- **Cholesky Factorization Time (`median_factorization_time_ms`):** Time spent performing symbolic and numeric $L D L^T$ decomposition. For iterative solvers, this is recorded as `N/A`.
+- **Iterative Setup / Preconditioner Time (`median_setup_time_ms`):** Time spent computing the Jacobi diagonal inverse preconditioner or SSOR diagonal extraction. For direct Cholesky, this is recorded as `N/A`.
+- **Iteration / Solve Time (`median_solve_time_ms`):** Pure execution time of Krylov inner iterations, relaxation sweeps, or triangular substitutions.
+- **Median Total Time (`median_time_ms`):** The 50th percentile of total execution time ($t_{\text{setup}} + t_{\text{solve}}$) across N trials.
 
 **Why median instead of mean?**
 
@@ -118,9 +124,18 @@ The same benchmark protocol is run at three mesh resolutions:
 For each level, the following are recorded:
 - Node count, element count, DOF count
 - Max temperature (°C)
-- Each solver's median time, residual, and max ΔT vs reference
+- Solver convergence status (`cholesky_converged`, `cg_converged`, `gs_converged`)
+- Each solver's median total time, factorization time, setup time, iteration time, residual, and max ΔT vs reference
 
-Convergence is assessed by plotting max temperature vs mesh DOF count on a log-log scale.
+### 5.1 Data-Driven Mesh & Solver Recommendation
+
+Rather than using hardcoded speedup assertions, UEW computes actual runtime ratios directly from measured benchmark data:
+- Temperature shift between medium and fine grids: $\Delta T = |T_{\text{max, fine}} - T_{\text{max, med}}| / T_{\text{max, fine}} \times 100\%$
+- Measured Cholesky speedup: $S_{\text{chol}} = t_{\text{chol, fine}} / t_{\text{chol, med}}$
+- Measured CG speedup: $S_{\text{CG}} = t_{\text{CG, fine}} / t_{\text{CG, med}}$
+- Verification of convergence status for each solver across all three mesh resolutions.
+
+The recommendation dynamically evaluates whether the medium mesh satisfies engineering fidelity within 5% of the fine mesh while reporting the exact measured speedup factor.
 
 ---
 

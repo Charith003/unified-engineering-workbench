@@ -210,6 +210,12 @@ export interface HeatSinkMeshFace {
   normal: [number, number, number];
 }
 
+export interface HeatSinkMeshElement {
+  id: number;
+  nodes: [number, number, number, number];
+  quality: number;
+}
+
 export interface HeatSinkMeshResult {
   is_valid: boolean;
   status_message: string;
@@ -225,6 +231,7 @@ export interface HeatSinkMeshResult {
   mean_quality: number;
   nodes: HeatSinkMeshNode[];
   boundary_faces: HeatSinkMeshFace[];
+  elements?: HeatSinkMeshElement[];
 }
 
 export interface SolverMetric {
@@ -238,6 +245,7 @@ export interface SolverMetric {
   min_total_time_ms: number;
   max_total_time_ms: number;
   median_factorization_time_ms: number;
+  median_setup_time_ms?: number;
   median_solve_time_ms: number;
   speedup_vs_reference: number;
   memory_kb: number;
@@ -273,6 +281,9 @@ export interface ConvergencePoint {
   cholesky_time_ms: number;
   cg_time_ms: number;
   gs_time_ms: number;
+  cholesky_converged?: boolean;
+  cg_converged?: boolean;
+  gs_converged?: boolean;
 }
 
 export interface HeatSinkConvergenceResult {
@@ -286,15 +297,16 @@ export interface HeatSinkThermalResult {
   success: boolean;
   solver_name: string;
   status_message: string;
-  min_temperature_c: number;
-  max_temperature_c: number;
-  avg_temperature_c: number;
-  thermal_resistance_k_w: number;
-  total_heat_in_w: number;
-  total_heat_out_w: number;
-  energy_balance_error_percent: number;
+  min_temperature_c?: number;
+  max_temperature_c?: number;
+  avg_temperature_c?: number;
+  thermal_resistance_k_w?: number;
+  total_heat_in_w?: number;
+  total_heat_out_w?: number;
+  energy_balance_error_percent?: number;
   assembly_time_ms: number;
   factorization_time_ms: number;
+  setup_time_ms?: number;
   solve_time_ms: number;
   total_time_ms: number;
   iterations: number;
@@ -303,4 +315,5 @@ export interface HeatSinkThermalResult {
   nodal_temperatures: number[];
   nodes?: HeatSinkMeshNode[];
   boundary_faces?: HeatSinkMeshFace[];
+  elements?: HeatSinkMeshElement[];
 }

@@ -21,12 +21,20 @@ struct SolverBenchmarkMetrics {
     double residual_norm{0.0};
     double max_temp_diff_vs_reference_c{0.0}; // max |T_i - T_i,ref|
     
-    // Timing in milliseconds (computed over 5 measured runs, 1 warmup excluded)
+    // Timing in milliseconds (computed over measured runs, 1 warmup excluded)
     double median_total_time_ms{0.0};
     double min_total_time_ms{0.0};
     double max_total_time_ms{0.0};
-    double median_factorization_time_ms{0.0};
+
+    // Factorization time (only for direct solvers like Cholesky; -1.0 if N/A)
+    double median_factorization_time_ms{-1.0};
+
+    // Preconditioner or solver setup time (for iterative solvers like CG and SSOR; -1.0 if N/A)
+    double median_setup_time_ms{-1.0};
+
+    // Pure iteration or solve time (solve step for direct, iteration loop for iterative solvers)
     double median_solve_time_ms{0.0};
+
     double speedup_vs_reference{1.0}; // T_ref / T_solver
 
     size_t memory_kb{0};
@@ -70,6 +78,9 @@ struct MeshConvergencePoint {
     double cholesky_time_ms{0.0};
     double cg_time_ms{0.0};
     double gs_time_ms{0.0};
+    bool cholesky_converged{false};
+    bool cg_converged{false};
+    bool gs_converged{false};
 };
 
 /**

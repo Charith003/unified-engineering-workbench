@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Layers, Play, Download, AlertCircle, CheckCircle, Info, Eye, EyeOff, RotateCcw, Box } from 'lucide-react';
+import { Layers, Play, Download, AlertCircle, CheckCircle, Info, Eye, EyeOff, RotateCcw, Box, Scissors } from 'lucide-react';
 import {
   generateHeatSinkGeometry,
   generateHeatSinkMesh,
@@ -12,7 +12,7 @@ import {
 import type {
   HeatSinkGeometryResult, HeatSinkMeshResult,
   HeatSinkThermalResult, HeatSinkBenchmarkResult,
-  HeatSinkConvergenceResult, HeatSinkMeshNode, HeatSinkMeshFace
+  HeatSinkConvergenceResult, HeatSinkMeshNode, HeatSinkMeshFace, HeatSinkMeshElement
 } from '../types/api';
 import Plot from 'react-plotly.js';
 
@@ -322,6 +322,7 @@ function GeometryTab({ result }: { result: HeatSinkGeometryResult | null }) {
 interface ViewerProps {
   nodes?: HeatSinkMeshNode[];
   boundaryFaces?: HeatSinkMeshFace[];
+  elements?: HeatSinkMeshElement[];
   nodalTemperatures?: number[];
   minTemp?: number;
   maxTemp?: number;
@@ -360,6 +361,7 @@ function boundaryColor(bt: string): THREE.Color {
 function HeatSink3DViewer({
   nodes,
   boundaryFaces,
+  elements,
   nodalTemperatures,
   minTemp = 25,
   maxTemp = 75,
@@ -368,6 +370,8 @@ function HeatSink3DViewer({
   const mountRef = useRef<HTMLDivElement>(null);
   const [wireframeVisible, setWireframeVisible] = useState(mode === 'mesh');
   const [surfaceVisible, setSurfaceVisible] = useState(true);
+  const [internalTetsVisible, setInternalTetsVisible] = useState(false);
+  const [sectionCutVisible, setSectionCutVisible] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<{
     id: number;
     x: number;
@@ -381,6 +385,9 @@ function HeatSink3DViewer({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const surfaceMeshRef = useRef<THREE.Mesh | null>(null);
   const wireMeshRef = useRef<THREE.LineSegments | null>(null);
+  const internalMeshRef = useRef<THREE.LineSegments | null>(null);
+  const materialsRef = useRef<THREE.Material[]>([]);
+  const clipPlaneRef = useRef<THREE.Plane>(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0));
   const resetCameraPos = useRef<THREE.Vector3>(new THREE.Vector3());
 
   // Update visibility on state changes
@@ -391,6 +398,18 @@ function HeatSink3DViewer({
   useEffect(() => {
     if (surfaceMeshRef.current) surfaceMeshRef.current.visible = surfaceVisible;
   }, [surfaceVisible]);
+
+  useEffect(() => {
+    if (internalMeshRef.current) internalMeshRef.current.visible = internalTetsVisible;
+  }, [internalTetsVisible]);
+
+  useEffect(() => {
+    const planes = sectionCutVisible ? [clipPlaneRef.current] : [];
+    for (const m of materialsRef.current) {
+      m.clippingPlanes = planes;
+      m.needsUpdate = true;
+    }
+  }, [sectionCutVisible]);
 
   useEffect(() => {
     if (!mountRef.current || !nodes || nodes.length === 0 || !boundaryFaces || boundaryFaces.length === 0) {
@@ -404,6 +423,7 @@ function HeatSink3DViewer({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x0e1410, 1.0);
+    renderer.localClippingEnabled = true;
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -477,11 +497,14 @@ function HeatSink3DViewer({
     geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geom.computeVertexNormals();
 
+    const activeClipPlanes = sectionCutVisible ? [clipPlaneRef.current] : [];
+
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
       roughness: 0.35,
       metalness: 0.15,
+      clippingPlanes: activeClipPlanes,
     });
     const surfaceMesh = new THREE.Mesh(geom, mat);
     surfaceMesh.visible = surfaceVisible;
@@ -493,12 +516,60 @@ function HeatSink3DViewer({
     const wireMat = new THREE.LineBasicMaterial({
       color: 0xB7F34A,
       opacity: 0.25,
-      transparent: true
+      transparent: true,
+      clippingPlanes: activeClipPlanes,
     });
     const wireMesh = new THREE.LineSegments(wireGeo, wireMat);
     wireMesh.visible = wireframeVisible;
     scene.add(wireMesh);
     wireMeshRef.current = wireMesh;
+
+    // Internal Tetrahedral Mesh (actual backend element connectivity)
+    let internalGeom: THREE.BufferGeometry | null = null;
+    let internalMat: THREE.LineBasicMaterial | null = null;
+    if (elements && elements.length > 0) {
+      const edgeSet = new Set<string>();
+      const internalPositions: number[] = [];
+
+      for (const el of elements) {
+        const [e0, e1, e2, e3] = el.nodes;
+        const tetEdges: [number, number][] = [
+          [e0, e1], [e0, e2], [e0, e3],
+          [e1, e2], [e1, e3], [e2, e3]
+        ];
+        for (const [a, b] of tetEdges) {
+          const minN = Math.min(a, b);
+          const maxN = Math.max(a, b);
+          const key = `${minN}_${maxN}`;
+          if (!edgeSet.has(key)) {
+            edgeSet.add(key);
+            const na = nodeMap.get(a);
+            const nb = nodeMap.get(b);
+            if (na && nb) {
+              internalPositions.push((na.x - cx) * scale, (na.z - cz) * scale, -(na.y - cy) * scale);
+              internalPositions.push((nb.x - cx) * scale, (nb.z - cz) * scale, -(nb.y - cy) * scale);
+            }
+          }
+        }
+      }
+
+      if (internalPositions.length > 0) {
+        internalGeom = new THREE.BufferGeometry();
+        internalGeom.setAttribute('position', new THREE.Float32BufferAttribute(internalPositions, 3));
+        internalMat = new THREE.LineBasicMaterial({
+          color: 0xF59E0B, // Amber
+          opacity: 0.35,
+          transparent: true,
+          clippingPlanes: activeClipPlanes,
+        });
+        const internalLineMesh = new THREE.LineSegments(internalGeom, internalMat);
+        internalLineMesh.visible = internalTetsVisible;
+        scene.add(internalLineMesh);
+        internalMeshRef.current = internalLineMesh;
+      }
+    }
+
+    materialsRef.current = [mat, wireMat, ...(internalMat ? [internalMat] : [])];
 
     // Ground orientation grid
     const grid = new THREE.GridHelper(8, 16, 0x223522, 0x142014);
@@ -600,9 +671,11 @@ function HeatSink3DViewer({
       mat.dispose();
       wireGeo.dispose();
       wireMat.dispose();
+      if (internalGeom) internalGeom.dispose();
+      if (internalMat) internalMat.dispose();
       renderer.dispose();
     };
-  }, [nodes, boundaryFaces, nodalTemperatures, minTemp, maxTemp, mode]);
+  }, [nodes, boundaryFaces, elements, nodalTemperatures, minTemp, maxTemp, mode]);
 
   const handleReset = () => {
     if (cameraRef.current && controlsRef.current) {
@@ -633,6 +706,30 @@ function HeatSink3DViewer({
         </div>
 
         <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+          {elements && elements.length > 0 && (
+            <button
+              onClick={() => setInternalTetsVisible(v => !v)}
+              style={{
+                background: internalTetsVisible ? '#F59E0B' : 'rgba(20, 30, 22, 0.85)',
+                color: internalTetsVisible ? '#101810' : '#E5EAE2',
+                border: '1px solid #2a3d2a', borderRadius: 5, padding: '4px 8px',
+                fontSize: 11, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+              }}>
+              <Layers size={12} />
+              Internal Tets
+            </button>
+          )}
+          <button
+            onClick={() => setSectionCutVisible(v => !v)}
+            style={{
+              background: sectionCutVisible ? '#EC4899' : 'rgba(20, 30, 22, 0.85)',
+              color: sectionCutVisible ? '#FFFFFF' : '#E5EAE2',
+              border: '1px solid #2a3d2a', borderRadius: 5, padding: '4px 8px',
+              fontSize: 11, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+            }}>
+            <Scissors size={12} />
+            Section Cut
+          </button>
           <button
             onClick={() => setWireframeVisible(v => !v)}
             style={{
@@ -762,6 +859,7 @@ function MeshTab({ result }: { result: HeatSinkMeshResult | null }) {
         <HeatSink3DViewer
           nodes={result.nodes}
           boundaryFaces={result.boundary_faces}
+          elements={result.elements}
           mode="mesh"
         />
       </div>
@@ -847,11 +945,50 @@ function ThermalTab({
 }) {
   if (!result) return <EmptyState label="Click 'Run Thermal Solve' to execute the 3D FEM simulation" />;
 
+  // 1. THERMAL API FAILURE HANDLING:
+  // Do not calculate min/max/average temperature, heat output, energy balance or visualization data from an invalid solution.
+  if (!result.success) {
+    return (
+      <div>
+        <div className="alert" style={{
+          background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
+          padding: 16, borderRadius: 8, marginBottom: 16
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+            <AlertCircle size={18} />
+            Solver Execution Incomplete — {result.solver_name} Did Not Converge
+          </div>
+          <div style={{ fontSize: 13, color: '#7F1D1D' }}>
+            {result.status_message}. Temperature metrics, energy conservation calculations, and 3D visual contours are withheld for invalid numerical solutions.
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title"><span className="accent-dot" />Solver Diagnostic Details</div>
+          <table className="data-table">
+            <tbody>
+              <tr><td>Solver</td><td style={{ fontWeight: 600 }}>{result.solver_name}</td></tr>
+              <tr><td>Status</td><td style={{ color: '#F87171', fontWeight: 600 }}>✗ {result.status_message}</td></tr>
+              <tr><td>Iterations Completed</td><td>{result.iterations}</td></tr>
+              <tr><td>Final Residual Norm ‖r‖/‖b‖</td><td>{result.residual_norm.toExponential(3)}</td></tr>
+              <tr><td>Assembly Time</td><td>{result.assembly_time_ms.toFixed(1)} ms</td></tr>
+              <tr><td>Cholesky Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Preconditioner / Setup Time</td><td>{result.setup_time_ms !== undefined && result.setup_time_ms >= 0 ? `${result.setup_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Iteration / Solve Time</td><td>{result.solve_time_ms.toFixed(1)} ms</td></tr>
+              <tr><td>Total Time</td><td>{result.total_time_ms.toFixed(1)} ms</td></tr>
+              <tr><td>Memory (est.)</td><td>{result.memory_kb} KB</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   const nTemp = result.nodal_temperatures;
   const histBins = 20;
-  const tMin = result.min_temperature_c;
-  const tMax = result.max_temperature_c;
-  const step = (tMax - tMin) / histBins;
+  const tMin = result.min_temperature_c ?? 25;
+  const tMax = result.max_temperature_c ?? 25;
+  const step = Math.max(0.1, (tMax - tMin) / histBins);
   const bins = Array.from({ length: histBins }, (_, i) => tMin + i * step);
   const counts = bins.map((b, i) =>
     nTemp.filter(t => t >= b && (i === histBins - 1 ? t <= b + step : t < b + step)).length
@@ -859,6 +996,7 @@ function ThermalTab({
 
   const displayNodes = result.nodes ?? meshResult?.nodes ?? [];
   const displayFaces = result.boundary_faces ?? meshResult?.boundary_faces ?? [];
+  const displayElements = result.elements ?? meshResult?.elements;
 
   return (
     <div>
@@ -874,6 +1012,7 @@ function ThermalTab({
           <HeatSink3DViewer
             nodes={displayNodes}
             boundaryFaces={displayFaces}
+            elements={displayElements}
             nodalTemperatures={nTemp}
             minTemp={tMin}
             maxTemp={tMax}
@@ -884,10 +1023,10 @@ function ThermalTab({
 
       <div className="grid-4" style={{ gap: 12, marginBottom: 16 }}>
         {[
-          { label: 'Min Temperature', value: `${result.min_temperature_c.toFixed(2)} °C`, accent: '#36B8C5' },
-          { label: 'Max Temperature', value: `${result.max_temperature_c.toFixed(2)} °C`, accent: '#F4A261' },
-          { label: 'Avg Temperature', value: `${result.avg_temperature_c.toFixed(2)} °C`, accent: '#B7F34A' },
-          { label: 'Thermal Resistance', value: `${result.thermal_resistance_k_w.toFixed(3)} K/W`, accent: '#202820' },
+          { label: 'Min Temperature', value: `${(result.min_temperature_c ?? 0).toFixed(2)} °C`, accent: '#36B8C5' },
+          { label: 'Max Temperature', value: `${(result.max_temperature_c ?? 0).toFixed(2)} °C`, accent: '#F4A261' },
+          { label: 'Avg Temperature', value: `${(result.avg_temperature_c ?? 0).toFixed(2)} °C`, accent: '#B7F34A' },
+          { label: 'Thermal Resistance', value: `${(result.thermal_resistance_k_w ?? 0).toFixed(3)} K/W`, accent: '#202820' },
         ].map(({ label, value, accent }) => (
           <div key={label} className="card" style={{ padding: '14px 16px' }}>
             <div style={{ fontSize: 11, color: '#758078', marginBottom: 4 }}>{label}</div>
@@ -908,8 +1047,9 @@ function ThermalTab({
               <tr><td>Iterations</td><td>{result.iterations}</td></tr>
               <tr><td>Residual Norm ‖r‖/‖b‖</td><td>{result.residual_norm.toExponential(3)}</td></tr>
               <tr><td>Assembly Time</td><td>{result.assembly_time_ms.toFixed(1)} ms</td></tr>
-              <tr><td>Factorization Time</td><td>{result.factorization_time_ms.toFixed(1)} ms</td></tr>
-              <tr><td>Solve Time</td><td>{result.solve_time_ms.toFixed(1)} ms</td></tr>
+              <tr><td>Cholesky Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Preconditioner / Setup Time</td><td>{result.setup_time_ms !== undefined && result.setup_time_ms >= 0 ? `${result.setup_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Iteration / Solve Time</td><td>{result.solve_time_ms.toFixed(1)} ms</td></tr>
               <tr><td>Total Time</td><td>{result.total_time_ms.toFixed(1)} ms</td></tr>
               <tr><td>Memory (est.)</td><td>{result.memory_kb} KB</td></tr>
             </tbody>
@@ -920,16 +1060,16 @@ function ThermalTab({
           <div className="card-title"><span className="accent-dot" />Energy Balance</div>
           <table className="data-table" style={{ marginBottom: 12 }}>
             <tbody>
-              <tr><td>Heat In (source)</td><td>{result.total_heat_in_w.toFixed(3)} W</td></tr>
-              <tr><td>Heat Out (convection)</td><td>{result.total_heat_out_w.toFixed(3)} W</td></tr>
+              <tr><td>Heat In (source)</td><td>{(result.total_heat_in_w ?? 0).toFixed(3)} W</td></tr>
+              <tr><td>Heat Out (convection)</td><td>{(result.total_heat_out_w ?? 0).toFixed(3)} W</td></tr>
               <tr><td>Balance Error</td><td>
-                <span style={{ color: result.energy_balance_error_percent < 5 ? '#4ADE80' : '#F87171' }}>
-                  {result.energy_balance_error_percent.toFixed(2)}%
+                <span style={{ color: (result.energy_balance_error_percent ?? 0) < 5 ? '#4ADE80' : '#F87171' }}>
+                  {(result.energy_balance_error_percent ?? 0).toFixed(2)}%
                 </span>
               </td></tr>
             </tbody>
           </table>
-          {result.energy_balance_error_percent < 5 && (
+          {(result.energy_balance_error_percent ?? 0) < 5 && (
             <div className="alert alert-success">
               <CheckCircle size={13} /> Energy conservation satisfied (&lt;5% error)
             </div>
@@ -1013,8 +1153,10 @@ function BenchmarkTab({ result }: { result: HeatSinkBenchmarkResult | null }) {
               <th>Status</th>
               <th>Iterations</th>
               <th>Residual ‖r‖/‖b‖</th>
-              <th>Median Time (ms)</th>
-              <th>Factorization (ms)</th>
+              <th>Median Total (ms)</th>
+              <th>Cholesky Factorization (ms)</th>
+              <th>Setup / Precond (ms)</th>
+              <th>Solve / Iteration (ms)</th>
               <th>Speedup vs Cholesky</th>
               <th>Max ΔT vs Ref (°C)</th>
               <th>Memory (KB)</th>
@@ -1030,7 +1172,9 @@ function BenchmarkTab({ result }: { result: HeatSinkBenchmarkResult | null }) {
                 <td>{s.iterations}</td>
                 <td>{s.residual_norm.toExponential(3)}</td>
                 <td><strong>{s.median_total_time_ms.toFixed(2)}</strong></td>
-                <td>{s.median_factorization_time_ms.toFixed(2)}</td>
+                <td>{s.median_factorization_time_ms >= 0 ? s.median_factorization_time_ms.toFixed(2) : 'N/A'}</td>
+                <td>{s.median_setup_time_ms !== undefined && s.median_setup_time_ms >= 0 ? s.median_setup_time_ms.toFixed(2) : 'N/A'}</td>
+                <td>{s.median_solve_time_ms.toFixed(2)}</td>
                 <td>
                   <span style={{
                     padding: '2px 8px', borderRadius: 12,
@@ -1038,10 +1182,10 @@ function BenchmarkTab({ result }: { result: HeatSinkBenchmarkResult | null }) {
                     color: s.speedup_vs_reference > 1 ? '#4a7a00' : '#c05000',
                     fontWeight: 600
                   }}>
-                    {s.speedup_vs_reference.toFixed(2)}×
+                    {s.speedup_vs_reference > 0 ? `${s.speedup_vs_reference.toFixed(2)}×` : 'N/A'}
                   </span>
                 </td>
-                <td>{s.max_temp_diff_vs_reference_c.toFixed(4)}</td>
+                <td>{s.max_temp_diff_vs_reference_c >= 0 ? s.max_temp_diff_vs_reference_c.toFixed(4) : 'N/A'}</td>
                 <td>{s.memory_kb}</td>
               </tr>
             ))}
@@ -1130,7 +1274,16 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
           <div className="card-title"><span className="accent-dot" />Mesh Level Comparison</div>
           <table className="data-table">
             <thead>
-              <tr><th>Mesh</th><th>Nodes</th><th>Tets</th><th>T_max (°C)</th><th>Δ (%)</th></tr>
+              <tr>
+                <th>Mesh</th>
+                <th>Nodes</th>
+                <th>Tets</th>
+                <th>T_max (°C)</th>
+                <th>Δ (%)</th>
+                <th>Cholesky</th>
+                <th>CG</th>
+                <th>SSOR</th>
+              </tr>
             </thead>
             <tbody>
               {pts.map(pt => (
@@ -1141,6 +1294,15 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
                   <td>{pt.max_temperature_c.toFixed(2)}</td>
                   <td><span style={{ color: pt.relative_change_percent < 2 ? '#4ADE80' : '#F87171' }}>
                     {pt.relative_change_percent.toFixed(2)}%
+                  </span></td>
+                  <td><span style={{ color: pt.cholesky_converged !== false ? '#4ADE80' : '#F87171' }}>
+                    {pt.cholesky_converged !== false ? '✓' : '✗'}
+                  </span></td>
+                  <td><span style={{ color: pt.cg_converged !== false ? '#4ADE80' : '#F87171' }}>
+                    {pt.cg_converged !== false ? '✓' : '✗'}
+                  </span></td>
+                  <td><span style={{ color: pt.gs_converged ? '#4ADE80' : '#F87171' }}>
+                    {pt.gs_converged ? '✓' : '✗'}
                   </span></td>
                 </tr>
               ))}

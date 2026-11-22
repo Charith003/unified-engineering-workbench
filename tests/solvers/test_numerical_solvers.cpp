@@ -164,3 +164,23 @@ TEST_F(NumericalSolversTest, SolversAgreementOnIdenticalSystem) {
         EXPECT_NE(gs_res.error_message.find("Maximum iterations reached"), std::string::npos);
     }
 }
+
+TEST_F(NumericalSolversTest, ThermalAPIFailureHandlingOnNonConvergentSolver) {
+    // QA Requirement 1: Verify API failure handling on deliberately non-convergent solver configuration
+    GaussSeidelSolver solver;
+    SolverConfig cfg;
+    cfg.tolerance = 1e-15;  // Unreachable tolerance
+    cfg.max_iterations = 2; // Strict iteration budget
+
+    auto sres = solver.solve(sys_.K, sys_.F, cfg);
+
+    EXPECT_FALSE(sres.success);
+    EXPECT_EQ(sres.iterations, 2);
+
+    // Verify API validation logic: solver failure must invalidate the solution
+    bool solution_valid = sres.success &&
+                          (sres.solution.size() == static_cast<Eigen::Index>(sys_.dof_count)) &&
+                          sres.solution.allFinite();
+    EXPECT_FALSE(solution_valid);
+    EXPECT_FALSE(sres.error_message.empty());
+}

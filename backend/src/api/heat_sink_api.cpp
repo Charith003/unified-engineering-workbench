@@ -155,6 +155,15 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 });
             }
 
+            json elements_json = json::array();
+            for (const auto& el : m.elements) {
+                elements_json.push_back({
+                    {"id", el.id},
+                    {"nodes", {el.nodes[0], el.nodes[1], el.nodes[2], el.nodes[3]}},
+                    {"quality", el.quality}
+                });
+            }
+
             json data = {
                 {"is_valid", report.is_valid},
                 {"status_message", report.message},
@@ -169,7 +178,8 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"max_quality", m.stats.max_quality},
                 {"mean_quality", m.stats.mean_quality},
                 {"nodes", nodes_json},
-                {"boundary_faces", faces_json}
+                {"boundary_faces", faces_json},
+                {"elements", elements_json}
             };
 
             json_response(req, res, {{"success", true}, {"data", data}});
@@ -228,6 +238,37 @@ void register_heat_sink_routes(httplib::Server& svr) {
 
             auto sres = solver->solve(sys.K, sys.F, scfg);
 
+            bool is_cholesky = (sres.solver_name.find("Cholesky") != std::string::npos);
+            bool solution_valid = sres.success &&
+                                  (sres.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) &&
+                                  sres.solution.allFinite();
+
+            // 1. THERMAL API FAILURE HANDLING:
+            // If the solver fails, return a structured failure response.
+            // Do not calculate min/max/average temperature, heat output, energy balance or visualization data from an invalid solution.
+            if (!solution_valid) {
+                json data = {
+                    {"success", false},
+                    {"solver_name", sres.solver_name},
+                    {"status_message", sres.error_message.empty() ? "Solver failed to reach specified convergence tolerance" : sres.error_message},
+                    {"assembly_time_ms", sys.assembly_time_ms},
+                    {"factorization_time_ms", is_cholesky ? sres.factorization_time_ms : -1.0},
+                    {"setup_time_ms", !is_cholesky ? sres.factorization_time_ms : -1.0},
+                    {"solve_time_ms", sres.solve_time_ms},
+                    {"total_time_ms", sres.total_time_ms},
+                    {"iterations", sres.iterations},
+                    {"residual_norm", sres.residual_norm},
+                    {"memory_kb", sres.estimated_memory_bytes / 1024},
+                    {"nodal_temperatures", json::array()},
+                    {"nodes", json::array()},
+                    {"boundary_faces", json::array()},
+                    {"elements", json::array()}
+                };
+                json_response(req, res, {{"success", true}, {"data", data}});
+                return;
+            }
+
+            // Only compute downstream metrics on genuine valid solutions
             double q_out = thermal::FEM3DSolver::compute_total_heat_out(m, sres.solution, bc);
             double t_min = sres.solution.minCoeff();
             double t_max = sres.solution.maxCoeff();
@@ -257,8 +298,17 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 });
             }
 
+            json elements_json = json::array();
+            for (const auto& el : m.elements) {
+                elements_json.push_back({
+                    {"id", el.id},
+                    {"nodes", {el.nodes[0], el.nodes[1], el.nodes[2], el.nodes[3]}},
+                    {"quality", el.quality}
+                });
+            }
+
             json data = {
-                {"success", sres.success},
+                {"success", true},
                 {"solver_name", sres.solver_name},
                 {"status_message", sres.error_message.empty() ? "Optimal Convergence" : sres.error_message},
                 {"min_temperature_c", t_min},
@@ -269,7 +319,8 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"total_heat_out_w", q_out},
                 {"energy_balance_error_percent", energy_err},
                 {"assembly_time_ms", sys.assembly_time_ms},
-                {"factorization_time_ms", sres.factorization_time_ms},
+                {"factorization_time_ms", is_cholesky ? sres.factorization_time_ms : -1.0},
+                {"setup_time_ms", !is_cholesky ? sres.factorization_time_ms : -1.0},
                 {"solve_time_ms", sres.solve_time_ms},
                 {"total_time_ms", sres.total_time_ms},
                 {"iterations", sres.iterations},
@@ -277,7 +328,8 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"memory_kb", sres.estimated_memory_bytes / 1024},
                 {"nodal_temperatures", nodal_temps},
                 {"nodes", nodes_json},
-                {"boundary_faces", faces_json}
+                {"boundary_faces", faces_json},
+                {"elements", elements_json}
             };
 
             json_response(req, res, {{"success", true}, {"data", data}});
@@ -331,6 +383,7 @@ void register_heat_sink_routes(httplib::Server& svr) {
                     {"min_total_time_ms", s.min_total_time_ms},
                     {"max_total_time_ms", s.max_total_time_ms},
                     {"median_factorization_time_ms", s.median_factorization_time_ms},
+                    {"median_setup_time_ms", s.median_setup_time_ms},
                     {"median_solve_time_ms", s.median_solve_time_ms},
                     {"speedup_vs_reference", s.speedup_vs_reference},
                     {"memory_kb", s.memory_kb},
@@ -386,7 +439,10 @@ void register_heat_sink_routes(httplib::Server& svr) {
                     {"assembly_time_ms", pt.assembly_time_ms},
                     {"cholesky_time_ms", pt.cholesky_time_ms},
                     {"cg_time_ms", pt.cg_time_ms},
-                    {"gs_time_ms", pt.gs_time_ms}
+                    {"gs_time_ms", pt.gs_time_ms},
+                    {"cholesky_converged", pt.cholesky_converged},
+                    {"cg_converged", pt.cg_converged},
+                    {"gs_converged", pt.gs_converged}
                 });
             }
 
@@ -396,6 +452,8 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"recommendation", cr.recommendation},
                 {"points", points_json}
             };
+
+            json_response(req, res, {{"success", true}, {"data", data}});
 
             json_response(req, res, {{"success", true}, {"data", data}});
         } catch (const std::exception& e) {

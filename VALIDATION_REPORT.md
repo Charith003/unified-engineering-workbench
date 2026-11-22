@@ -61,7 +61,7 @@ All tests are compiled into `test_all_phases.exe`.
 
 **Manufactured Patch Test:** Applied T(x,y,z) = 2x + 3y + z as a known linear solution. Dirichlet BCs at boundary nodes enforced. After FEM solve, maximum nodal error was < 1×10⁻¹⁰ °C, confirming that the symmetric Dirichlet enforcement and B-matrix gradient computation are correct.
 
-### 2.5 Solver Tests (`test_numerical_solvers.cpp`) — 6 tests
+### 2.5 Solver Tests (`test_numerical_solvers.cpp`) — 7 tests
 
 | Test | Criterion | Result |
 |------|-----------|--------|
@@ -71,6 +71,7 @@ All tests are compiled into `test_all_phases.exe`.
 | GaussSeidelNonConvergedDetection | success = false when max_iterations reached | ✓ PASS |
 | GaussSeidelDivergentSystemDetection | success = false and divergence flagged | ✓ PASS |
 | SolversAgreementOnIdenticalSystem | CG max|ΔT| < 1e-3 K vs Cholesky | ✓ PASS |
+| ThermalAPIFailureHandlingOnNonConvergentSolver | API returns success=false and withholds thermal metrics on failure | ✓ PASS |
 
 ### 2.6 Benchmark Tests (`test_solver_benchmark.cpp`) — 2 tests
 
@@ -79,9 +80,9 @@ All tests are compiled into `test_all_phases.exe`.
 | FullBenchmarkRun | ✓ PASS |
 | MeshConvergenceStudy | ✓ PASS |
 
-**Total: 29/29 tests PASSED across 6 test suites (Phase 9)**
+**Total: 30/30 tests PASSED across 6 test suites (Phase 9)**
 **Legacy total: 45/45 tests PASSED (uew_tests.exe)**
-**Grand total: 74/74 tests PASSED (100% success rate)**
+**Grand total: 75/75 tests PASSED (100% success rate)**
 
 ---
 

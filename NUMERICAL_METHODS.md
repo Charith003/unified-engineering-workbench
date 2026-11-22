@@ -174,6 +174,14 @@ $$x_i^{(k+1)} = \frac{1}{K_{ii}} \left( F_i - \sum_{j < i} K_{ij} x_j^{(k)} - \s
 
 **Use:** Demonstrates classical stationary iterative solvers and their limitations on stiff 3D FEM matrices. Compare with CG, which converges in far fewer iterations.
 
+### 3.4 API Solution Validation Contract
+
+To guarantee that invalid or non-convergent numerical solutions are never presented as valid thermal physics:
+1. **Convergence Status Check:** The solver must report `sres.success == true`.
+2. **DOF Dimension Check:** The resulting solution vector size must strictly equal `sys.dof_count`.
+3. **Finite Value Check:** All vector elements must be finite (`sres.solution.allFinite()`).
+4. **Structured Failure Response:** If any check fails, the API returns `success = false`, sets an informative error message, and withholds computation of min/max/average temperature, heat flux output, and global energy balance.
+
 ---
 
 ## 4. Heat Sink Geometry
@@ -225,6 +233,13 @@ Tet 4: [1,3,4,6]  ← shared interior diagonal
 | Coarse | 8×6×3                    | ~1,000 | ~4,000    |
 | Medium | 12×9×5                   | ~5,000 | ~20,000   |
 | Fine   | 18×13×8                  | ~20,000| ~80,000   |
+
+### 5.3 Internal Tetrahedral Representation & Sectioning
+
+To inspect volumetric mesh topology without artificial interior decors:
+- Each linear tetrahedron comprises 6 unique internal edges: $(n_0, n_1), (n_0, n_2), (n_0, n_3), (n_1, n_2), (n_1, n_3), (n_2, n_3)$.
+- Edge pairs are uniquely deduplicated across adjacent tetrahedral elements to generate an authentic internal wireframe.
+- A dynamic local clipping plane normal to the Z-axis ($z \le z_{\text{cut}}$) permits cross-sectional examination of core temperature gradients and interior volumetric tetrahedra.
 
 ---
 

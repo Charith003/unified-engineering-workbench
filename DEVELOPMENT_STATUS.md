@@ -122,19 +122,20 @@
 [==========] Original Legacy Test Suite (uew_tests.exe): 45 tests from 6 test suites.
 [  PASSED  ] 45 tests. (Backprop: 8, Hardware: 9, Performance: 6, Thermal 1D: 9, CSV: 6, STL: 7)
 
-[==========] 3D Thermal FEM & Solvers Suite (test_all_phases.exe): 29 tests from 6 test suites.
-[  PASSED  ] 29 tests.
+[==========] 3D Thermal FEM & Solvers Suite (test_all_phases.exe): 30 tests from 6 test suites.
+[  PASSED  ] 30 tests.
   Geometry:  8  (incl. VolumeConsistencyWithPhysicalDimensions)
   Mesh:      6  (incl. HeatSourceTopSurfaceLocationAndArea, BottomFaceHasConvection,
                        DetectsOutOfRangeNodeIndex, DetectsNonFiniteCoordinates,
                        DetectsDegenerateDuplicateNodesInTet)
   Validator: 4
   Thermal 3D: 3 (incl. ManufacturedLinearSolutionPatchTest: max_err < 1e-10)
-  Solvers:   6  (incl. GaussSeidelConvergenceOnDiagonallyDominantSystem,
+  Solvers:   7  (incl. GaussSeidelConvergenceOnDiagonallyDominantSystem,
                        GaussSeidelNonConvergedDetection,
-                       GaussSeidelDivergentSystemDetection)
+                       GaussSeidelDivergentSystemDetection,
+                       ThermalAPIFailureHandlingOnNonConvergentSolver)
   Benchmark: 2
 
-[==========] Combined Total: 74 tests executed / 74 passed / 0 failed (100% success rate).
+[==========] Combined Total: 75 tests executed / 75 passed / 0 failed (100% success rate).
 ```
 All automated tests executed with 100% success rate.

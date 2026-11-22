@@ -8,6 +8,8 @@
 #include <chrono>
 #include <numeric>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <memory>
 
 namespace uew::benchmark {
@@ -81,7 +83,14 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
         metrics.min_total_time_ms = sorted_totals.empty() ? 0.0 : sorted_totals.front();
         metrics.max_total_time_ms = sorted_totals.empty() ? 0.0 : sorted_totals.back();
         metrics.median_total_time_ms = compute_median(total_times);
-        metrics.median_factorization_time_ms = compute_median(fact_times);
+        bool is_direct_cholesky = (solver->name().find("Cholesky") != std::string::npos);
+        if (is_direct_cholesky) {
+            metrics.median_factorization_time_ms = compute_median(fact_times);
+            metrics.median_setup_time_ms = -1.0;
+        } else {
+            metrics.median_factorization_time_ms = -1.0;
+            metrics.median_setup_time_ms = compute_median(fact_times);
+        }
         metrics.median_solve_time_ms = compute_median(solve_times);
 
         metrics.success = last_res.success;
@@ -193,18 +202,21 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         solvers::CholeskySolver chol;
         auto chol_res = chol.solve(sys.K, sys.F);
         pt.cholesky_time_ms = chol_res.total_time_ms;
+        pt.cholesky_converged = chol_res.success && (chol_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && chol_res.solution.allFinite();
 
         // Solve with CG
         solvers::ConjugateGradientSolver cg;
         auto cg_res = cg.solve(sys.K, sys.F);
         pt.cg_time_ms = cg_res.total_time_ms;
+        pt.cg_converged = cg_res.success && (cg_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && cg_res.solution.allFinite();
 
         // Solve with Gauss-Seidel
         solvers::GaussSeidelSolver gs;
         auto gs_res = gs.solve(sys.K, sys.F);
         pt.gs_time_ms = gs_res.total_time_ms;
+        pt.gs_converged = gs_res.success && (gs_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && gs_res.solution.allFinite();
 
-        if (chol_res.success && chol_res.solution.size() > 0) {
+        if (pt.cholesky_converged) {
             pt.max_temperature_c = chol_res.solution.maxCoeff();
             pt.min_temperature_c = chol_res.solution.minCoeff();
             pt.avg_temperature_c = chol_res.solution.mean();
@@ -221,14 +233,46 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
     }
 
     if (cr.points.size() >= 3) {
-        double fine_rel_change = cr.points.back().relative_change_percent;
-        cr.is_converged = (fine_rel_change < 2.0); // Within 2% asymptotic threshold
-        cr.asymptotic_estimate_c = cr.points.back().max_temperature_c;
-        if (cr.is_converged) {
-            cr.recommendation = "Medium mesh resolution provides optimal balance (<2% deviation from Fine, 4x faster).";
+        const auto& coarse = cr.points[0];
+        const auto& medium = cr.points[1];
+        const auto& fine = cr.points[2];
+
+        bool all_cholesky_converged = coarse.cholesky_converged && medium.cholesky_converged && fine.cholesky_converged;
+        double fine_rel_change = fine.relative_change_percent;
+        cr.is_converged = all_cholesky_converged && (fine_rel_change < 2.0);
+        cr.asymptotic_estimate_c = fine.max_temperature_c;
+
+        // Calculate actual measured timing ratios from measured data
+        double fine_chol_time = std::max(0.001, fine.cholesky_time_ms);
+        double med_chol_time = std::max(0.001, medium.cholesky_time_ms);
+        double actual_med_chol_speedup = fine_chol_time / med_chol_time;
+
+        double fine_cg_time = std::max(0.001, fine.cg_time_ms);
+        double med_cg_time = std::max(0.001, medium.cg_time_ms);
+        double actual_med_cg_speedup = fine_cg_time / med_cg_time;
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(1);
+
+        if (!all_cholesky_converged) {
+            oss << "Cholesky reference solver failed to converge at one or more mesh levels; mesh convergence is inconclusive.";
+        } else if (cr.is_converged) {
+            oss << "Medium mesh resolution achieves asymptotic convergence ("
+                << fine_rel_change << "% relative change vs Fine, below 2.0% threshold). "
+                << "Measured Medium solve speedup: " << actual_med_chol_speedup << "x (Cholesky), "
+                << actual_med_cg_speedup << "x (CG). "
+                << "Solvers status at Fine (" << fine.node_count << " DOFs): CG "
+                << (fine.cg_converged ? "converged" : "failed") << ", SSOR "
+                << (fine.gs_converged ? "converged" : "reached iteration limit") << ".";
         } else {
-            cr.recommendation = "Fine mesh required for high spatial temperature gradient resolution.";
+            oss << "Mesh has not fully converged at Fine level ("
+                << fine_rel_change << "% change exceeds 2.0% asymptotic threshold). "
+                << "Fine mesh resolution (" << fine.node_count << " DOFs) is recommended for high gradient accuracy. "
+                << "Measured solve time increased by " << actual_med_chol_speedup << "x from Medium to Fine. "
+                << "Solvers status at Fine: CG " << (fine.cg_converged ? "converged" : "failed")
+                << ", SSOR " << (fine.gs_converged ? "converged" : "reached iteration limit") << ".";
         }
+        cr.recommendation = oss.str();
     }
 
     return cr;
