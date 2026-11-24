@@ -355,28 +355,60 @@ TEST_F(NumericalSolversTest, ThermalAPIValidationRejectsResidualExceedingToleran
     EXPECT_TRUE(resp["data"]["nodal_temperatures"].empty());
 }
 
-TEST(HttpRouteIntegrationTest, RealHttpThermalSolveSuccessAndFailure) {
-    // QA Requirement 4: True HTTP route integration test sending real HTTP requests to local server
-    httplib::Server svr;
-    uew::api::register_heat_sink_routes(svr);
-    int port = svr.bind_to_any_port("127.0.0.1");
-    ASSERT_GT(port, 0);
-
-    std::thread svr_thread([&svr]() {
-        svr.listen_after_bind();
-    });
-
-    // Wait until server is listening
-    for (int retry = 0; retry < 100 && !svr.is_running(); ++retry) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+// RAII-based test HTTP server harness to guarantee clean shutdown, port deconfliction, and thread join
+class ScopedHttpTestServer {
+public:
+    ScopedHttpTestServer() : svr_(), port_(-1) {
+        uew::api::register_heat_sink_routes(svr_);
+        port_ = svr_.bind_to_any_port("127.0.0.1");
+        if (port_ > 0) {
+            svr_thread_ = std::thread([this]() {
+                svr_.listen_after_bind();
+            });
+            for (int retry = 0; retry < 100 && !svr_.is_running(); ++retry) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
     }
-    ASSERT_TRUE(svr.is_running());
 
-    httplib::Client cli("127.0.0.1", port);
-    cli.set_connection_timeout(5, 0);
-    cli.set_read_timeout(10, 0);
+    ~ScopedHttpTestServer() {
+        stop();
+    }
 
-    // 1. Real HTTP request: Successful Sparse LDLT solve (expect HTTP 200)
+    void stop() {
+        if (svr_.is_running()) {
+            svr_.stop();
+        }
+        if (svr_thread_.joinable()) {
+            svr_thread_.join();
+        }
+    }
+
+    int port() const { return port_; }
+    bool is_running() const { return svr_.is_running(); }
+
+    httplib::Client create_client() const {
+        httplib::Client cli("127.0.0.1", port_);
+        cli.set_connection_timeout(5, 0);
+        cli.set_read_timeout(10, 0);
+        return cli;
+    }
+
+private:
+    httplib::Server svr_;
+    int port_;
+    std::thread svr_thread_;
+};
+
+TEST(HttpRouteIntegrationTest, RealHttpThermalSolveSuccessAndFailure) {
+    // Phase 2 QA: True HTTP route integration test using RAII server lifecycle
+    ScopedHttpTestServer server;
+    ASSERT_GT(server.port(), 0);
+    ASSERT_TRUE(server.is_running());
+
+    auto cli = server.create_client();
+
+    // Scenario A: Real HTTP request: Successful Sparse LDLT solve (expect HTTP 200)
     nlohmann::json success_body = {
         {"resolution", "coarse"},
         {"solver", "cholesky"}
@@ -393,7 +425,7 @@ TEST(HttpRouteIntegrationTest, RealHttpThermalSolveSuccessAndFailure) {
     EXPECT_GT(json_ok["data"]["max_temperature_c"].get<double>(), 25.0);
     EXPECT_FALSE(json_ok["data"]["nodal_temperatures"].empty());
 
-    // 2. Real HTTP request: Deliberately non-convergent SSOR solve (expect HTTP 422)
+    // Scenario B: Real HTTP request: Deliberately non-convergent SSOR solve (expect HTTP 422)
     nlohmann::json fail_body = {
         {"resolution", "coarse"},
         {"solver", "gauss_seidel"},
@@ -415,9 +447,8 @@ TEST(HttpRouteIntegrationTest, RealHttpThermalSolveSuccessAndFailure) {
     EXPECT_TRUE(json_fail["data"]["nodes"].empty());
     EXPECT_TRUE(json_fail["data"]["elements"].empty());
 
-    // Stop server and join thread
-    svr.stop();
-    if (svr_thread.joinable()) {
-        svr_thread.join();
-    }
+    // Scenario D: Invalid input handling (malformed JSON / missing parameters)
+    auto res_bad = cli.Post("/api/heat-sink/thermal/solve", "NOT_A_VALID_JSON", "application/json");
+    ASSERT_TRUE(res_bad);
+    EXPECT_EQ(res_bad->status, 400);
 }
