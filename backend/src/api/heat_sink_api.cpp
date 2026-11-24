@@ -518,7 +518,8 @@ void register_heat_sink_routes(httplib::Server& svr) {
                 {"max_temp_converged", cr.max_temp_converged},
                 {"field_converged", cr.field_converged},
                 {"solver_converged", cr.solver_converged},
-                {"asymptotic_estimate_c", cr.asymptotic_estimate_c},
+                {"fine_grid_max_temperature_c", cr.fine_grid_max_temperature_c},
+                {"asymptotic_estimate_c", cr.fine_grid_max_temperature_c}, // Preserved for backwards compatibility (deprecated)
                 {"recommendation", cr.recommendation},
                 {"points", points_json}
             };

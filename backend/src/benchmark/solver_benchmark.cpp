@@ -315,23 +315,45 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         pt.element_count = m.elements.size();
         pt.assembly_time_ms = sys.assembly_time_ms;
 
+        // Independent residual check helper for mesh convergence validation
+        auto validate_solver_result = [&](const solvers::SolverResult& res, const std::string& solver_type) -> bool {
+            if (!res.success) return false;
+            if (res.solution.size() != static_cast<Eigen::Index>(m.nodes.size())) return false;
+            if (!res.solution.allFinite()) return false;
+
+            // Independently calculate: r_rel = ||K*T - F||_2 / ||F||_2
+            Eigen::VectorXd r_eval = sys.K * res.solution - sys.F;
+            double b_norm = sys.F.norm();
+            double r_norm = r_eval.norm();
+            double r_rel = (b_norm > 1e-15) ? (r_norm / b_norm) : r_norm;
+            if (!std::isfinite(r_rel)) return false;
+
+            if (solver_type == "cholesky") {
+                return (r_rel <= 1e-9); // Machine precision for direct Sparse LDLT
+            } else if (solver_type == "cg") {
+                return (r_rel <= 1.5e-6); // 1.5x allowance for Krylov recurrence drift
+            } else {
+                return (r_rel <= 1e-6); // SSOR strictly requires meeting tolerance
+            }
+        };
+
         // Solve with Sparse LDLT (Direct Reference)
         solvers::CholeskySolver chol;
         auto chol_res = chol.solve(sys.K, sys.F);
         pt.cholesky_time_ms = chol_res.total_time_ms;
-        pt.cholesky_converged = chol_res.success && (chol_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && chol_res.solution.allFinite();
+        pt.cholesky_converged = validate_solver_result(chol_res, "cholesky");
 
         // Solve with CG
         solvers::ConjugateGradientSolver cg;
         auto cg_res = cg.solve(sys.K, sys.F);
         pt.cg_time_ms = cg_res.total_time_ms;
-        pt.cg_converged = cg_res.success && (cg_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && cg_res.solution.allFinite();
+        pt.cg_converged = validate_solver_result(cg_res, "cg");
 
         // Solve with Gauss-Seidel (SSOR)
         solvers::GaussSeidelSolver gs;
         auto gs_res = gs.solve(sys.K, sys.F);
         pt.gs_time_ms = gs_res.total_time_ms;
-        pt.gs_converged = gs_res.success && (gs_res.solution.size() == static_cast<Eigen::Index>(m.nodes.size())) && gs_res.solution.allFinite();
+        pt.gs_converged = validate_solver_result(gs_res, "gs");
 
         if (pt.cholesky_converged) {
             pt.max_temperature_c = chol_res.solution.maxCoeff();
@@ -393,7 +415,8 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         cr.is_converged = cr.solver_converged && cr.max_temp_converged && cr.field_converged;
         
         // Fine-grid maximum temperature reported as highest-resolution measured value (not a proven asymptotic limit)
-        cr.asymptotic_estimate_c = fine.max_temperature_c;
+        cr.fine_grid_max_temperature_c = fine.max_temperature_c;
+        cr.asymptotic_estimate_c = fine.max_temperature_c; // Preserved for backwards compatibility
 
         // Calculate actual measured timing ratios from measured data (Median Total Solve Time)
         double fine_chol_time = std::max(0.001, fine.cholesky_time_ms);

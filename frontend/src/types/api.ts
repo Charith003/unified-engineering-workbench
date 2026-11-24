@@ -298,7 +298,9 @@ export interface HeatSinkConvergenceResult {
   max_temp_converged?: boolean;
   field_converged?: boolean;
   solver_converged?: boolean;
-  asymptotic_estimate_c: number;
+  fine_grid_max_temperature_c: number;
+  /** @deprecated Use fine_grid_max_temperature_c instead */
+  asymptotic_estimate_c?: number;
   recommendation: string;
   points: ConvergencePoint[];
 }

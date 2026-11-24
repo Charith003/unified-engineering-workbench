@@ -83,6 +83,11 @@ TEST(SolverBenchmark, MeshConvergenceStudy) {
     EXPECT_TRUE(cr.max_temp_converged); // Fine rel max temp change < 2.0%
     EXPECT_TRUE(cr.field_converged); // Fine rel field L2 diff < 5.0%
 
+    // Fine-grid maximum temperature verified
+    EXPECT_GT(cr.fine_grid_max_temperature_c, 25.0);
+    EXPECT_DOUBLE_EQ(cr.fine_grid_max_temperature_c, cr.points[2].max_temperature_c);
+    EXPECT_DOUBLE_EQ(cr.asymptotic_estimate_c, cr.points[2].max_temperature_c); // Backwards compatibility check
+
     // Recommendation contains data-driven timing comparison, base-domain sampled discrepancy, and extrapolation limitation
     EXPECT_FALSE(cr.recommendation.empty());
     EXPECT_NE(cr.recommendation.find("Median Total Solve Time"), std::string::npos);

@@ -262,19 +262,26 @@ To inspect volumetric mesh topology without artificial interior decors:
 - Edge pairs are uniquely deduplicated across adjacent tetrahedral elements to generate an authentic internal wireframe.
 - A dynamic local clipping plane normal to the Z-axis ($z \le z_{\text{cut}}$) permits cross-sectional examination of core temperature gradients and interior volumetric tetrahedra.
 
-### 5.4 Spatial Domain Probe Grid for Mesh Field Convergence
+### 5.4 Base-Domain Sampled Temperature-Field Discrepancy
 
-Comparing raw nodal solution vectors between meshes of different resolutions (e.g. 590 DOFs vs 1,944 DOFs) is mathematically invalid due to incompatible discrete function spaces.
+Comparing raw nodal solution vectors between meshes of different resolutions (e.g. 590 DOFs vs 1,944 DOFs) is mathematically invalid due to incompatible discrete vector spaces.
 
-To evaluate field-level convergence rigorously without vector truncation or padding, UEW deploys an independent 600-point 3D Cartesian spatial probe grid distributed through the solid domain volume:
+To evaluate field discrepancy across different mesh resolutions, UEW samples the base domain using an independent 600-point 3D Cartesian spatial probe grid distributed through the solid base volume:
 
-$$\mathbf{p}_k = (x_i, y_j, z_l), \quad x_i \in (0, L), \, y_j \in (0, W), \, z_l \in (0, t_{\text{base}})$$
+$$\mathbf{p}_k = (x_i, y_j, z_l), \quad x_i \in (0.1 L, 0.9 L), \, y_j \in (0.1 W, 0.9 W), \, z_l \in (0.1 t_{\text{base}}, 0.9 t_{\text{base}})$$
 
-At each probe point, the temperature field $T^{(m)}(\mathbf{p}_k)$ is evaluated using local 4-node Inverse Distance Weighting (IDW) from the surrounding tetrahedral nodes. The discrete relative $L_2$ field difference between successive mesh levels is:
+At each probe point, the temperature field $T^{(m)}(\mathbf{p}_k)$ is sampled using local four-nearest-node Inverse Distance Weighting (IDW):
+
+$$T(\mathbf{p}) \approx \frac{\sum_{j=1}^4 w_j T_j}{\sum_{j=1}^4 w_j}, \quad w_j = \frac{1}{\|\mathbf{p} - \mathbf{x}_j\|_2 + \epsilon}$$
+
+The discrete relative $L_2$ sampled field discrepancy between successive mesh levels is:
 
 $$\varepsilon_{\text{field}} = \frac{\sqrt{\sum_{k=1}^{600} \left( T^{(i)}(\mathbf{p}_k) - T^{(i-1)}(\mathbf{p}_k) \right)^2}}{\sqrt{\sum_{k=1}^{600} \left( T^{(i)}(\mathbf{p}_k) \right)^2}} \times 100\%$$
 
-This ensures that field-level convergence is physically and mathematically sound.
+**Methodological Classification & Limitations:**
+- This metric represents an **approximate base-domain sampled temperature-field discrepancy using four-nearest-node IDW interpolation**.
+- It is **not** full-domain 3D FEM element interpolation, nor exact tetrahedral barycentric interpolation across elements.
+- The 600 spatial probe points sample only the solid base plate domain where all mesh resolutions overlap.
 
 ---
 

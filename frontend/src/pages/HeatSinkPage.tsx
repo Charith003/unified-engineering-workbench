@@ -1282,9 +1282,9 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
                 </span>
               </div>
             </div>
-            {result.asymptotic_estimate_c > 0 && (
+            {(result.fine_grid_max_temperature_c ?? result.asymptotic_estimate_c ?? 0) > 0 && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
-                Asymptotic T_max estimate: <strong>{result.asymptotic_estimate_c.toFixed(2)} °C</strong>
+                Fine-grid maximum temperature: <strong>{(result.fine_grid_max_temperature_c ?? result.asymptotic_estimate_c)!.toFixed(2)} °C</strong>
               </div>
             )}
           </div>

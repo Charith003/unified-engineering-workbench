@@ -148,20 +148,21 @@ To avoid claiming mesh independence solely based on a single scalar value, UEW c
    $$\Delta T_{\text{avg}} = \frac{|T_{\text{avg}}^{(i)} - T_{\text{avg}}^{(i-1)}|}{T_{\text{avg}}^{(i)}} \times 100\%$$
 3. **Relative Thermal Resistance Change:**
    $$\Delta R_{\text{th}} = \frac{|R_{\text{th}}^{(i)} - R_{\text{th}}^{(i-1)}|}{R_{\text{th}}^{(i)}} \times 100\%$$
-4. **Field-Level Relative $L_2$ Discrepancy:**
-   Evaluated over an independent spatial probe grid of 600 sample points distributed across the solid volume. Temperature is sampled via 4-node local Inverse Distance Weighting (IDW) interpolation from the enclosing mesh:
+4. **Base-Domain Sampled Relative $L_2$ Discrepancy:**
+   Evaluated over an independent spatial probe grid of 600 sample points distributed across the solid base domain. Temperature is sampled via approximate 4-node local Inverse Distance Weighting (IDW) interpolation:
    $$\varepsilon_{\text{field}} = \frac{\sqrt{\sum_{k=1}^{600} (T^{(i)}(\mathbf{p}_k) - T^{(i-1)}(\mathbf{p}_k))^2}}{\sqrt{\sum_{k=1}^{600} (T^{(i)}(\mathbf{p}_k))^2}} \times 100\%$$
+   *Note: This is an approximate base-domain sampled field comparison, not a full-domain 3D element-level interpolation.*
 
 ### 5.2 Distinct Convergence Classifications
 
 The engine strictly distinguishes:
-- **Solver Convergence:** Did the numerical solvers (Sparse LDLT and CG) converge to the specified tolerance on the discretized matrix at this mesh level? (Yes, verified at all 3 levels).
+- **Solver Convergence:** Did the numerical solvers (Sparse LDLT and CG) converge to the specified tolerance on the discretized matrix at this mesh level based on independent residual verification? (Yes, verified at all 3 levels).
 - **Peak Temperature Convergence:** Has the maximum hot-spot temperature stabilized within engineering tolerance ($\Delta T_{\max} < 2.0\%$)?
-- **Field-Level Convergence:** Has the spatial distribution across the domain stabilized ($\varepsilon_{\text{field}} < 5.0\%$)?
+- **Field-Level Convergence:** Has the sampled base-domain distribution stabilized ($\varepsilon_{\text{field}} < 5.0\%$)?
 
-### 5.3 Asymptotic Limitation Notice
+### 5.3 Fine-Grid Limit & GCI Limitation Notice
 
-While the 3 tested mesh levels demonstrate clear monotonic reduction in error, **3 mesh levels are insufficient to rigorously establish asymptotic Grid Convergence Index (GCI) extrapolation** or Richardson error bands without higher-order refinement. The engine transparently reports this limitation rather than fabricating mathematical claims.
+Three mesh levels are insufficient to rigorously establish asymptotic Grid Convergence Index (GCI) extrapolation or Richardson error bands without higher-order refinement. The fine-grid peak temperature ($40.54^\circ\text{C}$) is reported as the highest-resolution discrete result, not a proven mathematical asymptotic limit. The engine transparently reports this limitation rather than fabricating mathematical claims.
 
 ### 5.4 Data-Driven Timing Comparison
 

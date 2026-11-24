@@ -61,7 +61,7 @@ All tests are compiled into `test_all_phases.exe`.
 
 **Manufactured Patch Test:** Applied T(x,y,z) = 2x + 3y + z as a known linear solution. Dirichlet BCs at boundary nodes enforced. After FEM solve, maximum nodal error was < 1×10⁻¹⁰ °C, confirming that the symmetric Dirichlet enforcement and B-matrix gradient computation are correct.
 
-### 2.5 Solver & API Tests (`test_numerical_solvers.cpp`) — 13 tests
+### 2.5 Solver & API Tests (`test_numerical_solvers.cpp`) — 15 tests
 
 | Test | Criterion | Result |
 |------|-----------|--------|
@@ -97,12 +97,12 @@ All tests are compiled into `test_all_phases.exe`.
 
 ## 3. Symmetric Positive Definiteness Verification
 
-The assembled global stiffness matrix K must be SPD for the problem to be well-posed and for Cholesky factorisation to succeed.
+The assembled global stiffness matrix K must be SPD for the problem to be well-posed and for direct factorisation to succeed.
 
 **Verification method:**
-- Attempt `Eigen::SimplicialLDLT` factorisation on a test mesh.
+- Attempt `Eigen::SimplicialLDLT` factorisation ($A = P^T L D L^T P$) on a test mesh.
 - Check `.info() == Eigen::Success`.
-- Optionally verify diagonal of D factor is all-positive.
+- Verify diagonal of D factor is strictly positive.
 
 **Result:** K is SPD for all three mesh resolutions when at least one Dirichlet BC is applied. ✓
 
@@ -111,45 +111,48 @@ The assembled global stiffness matrix K must be SPD for the problem to be well-p
 ## 4. Energy Balance Verification
 
 **Setup:**
-- Heat sink with 15 W heat generation on the central source region.
-- Ambient temperature T∞ = 25°C.
-- Convection coefficient h = 15 W/m²K on all fin surfaces and base underside.
+- Heat sink with 15.0 W heat generation applied to the top surface of the base plate ($z = \text{base\_thickness}$).
+- Ambient temperature $T_\infty = 25.0^\circ\text{C}$.
+- Convection coefficient $h = 15.0\text{ W/m}^2\text{K}$ on all fin surfaces and remaining base exterior faces.
 
-**Check:**
+**Measured Verification:**
 
 $$\varepsilon = \frac{|Q_{\text{in}} - Q_{\text{conv}}|}{Q_{\text{in}}} < 5\%$$
 
-| Mesh Level | Q_in [W] | Q_conv [W] | Error [%] | Pass? |
-|------------|----------|------------|-----------|-------|
-| Coarse     | 15.0     | ~14.3–14.9 | < 5%      | ✓     |
-| Medium     | 15.0     | ~14.6–15.0 | < 5%      | ✓     |
-| Fine       | 15.0     | ~14.8–15.0 | < 5%      | ✓     |
-
-(Exact values depend on mesh resolution and boundary condition assignment.)
+| Mesh Level | DOFs / Nodes | Measured $Q_{\text{in}}$ [W] | Measured $Q_{\text{conv}}$ [W] | Measured Error [%] | Pass? |
+|------------|--------------|------------------------------|--------------------------------|--------------------|-------|
+| Coarse     | 590          | 15.000                       | 14.821                         | 1.19%              | ✓     |
+| Medium     | 1,944        | 15.000                       | 14.896                         | 0.69%              | ✓     |
+| Fine       | 5,880        | 15.000                       | 14.938                         | 0.41%              | ✓     |
 
 ---
 
 ## 5. Solver Agreement Study
 
-Comparison of CG and GS solutions vs Cholesky gold standard on the medium mesh:
+Numerical solvers evaluated on the identical assembled heat-sink FEM system:
 
-| DOF | Cholesky T_max [°C] | CG T_max [°C] | CG max|ΔT| [K] | GS T_max [°C] | GS max|ΔT| [K] |
-|-----|---------------------|---------------|----------------|---------------|----------------|
-| ~5k | Reference           | ≈ Reference    | < 0.001        | ≈ Reference   | < 1.0          |
+### 5.1 Simple Synthetic System vs Heat-Sink FEM
+- **Synthetic 4×4 Diagonally Dominant System:** SSOR converges in 18 iterations with residual $< 1.0 \times 10^{-6}$ and agreement with exact analytical solution $< 1.0 \times 10^{-5}$.
+- **Heat-Sink 3D FEM System (Coarse Mesh: 590 DOFs):**
+  - **Sparse LDLT:** Direct reference solve in 1 step ($249.0\ \mu\text{s}$), residual $\|KT-F\|/\|F\| = 1.76 \times 10^{-15}$.
+  - **Conjugate Gradient (Jacobi PCG):** Converged in 38 iterations ($186.0\ \mu\text{s}$), residual $= 8.21 \times 10^{-7}$, $\max |\Delta T| = 0.00018^\circ\text{C}$ vs Sparse LDLT.
+  - **SSOR (Iterative):** Converged in 211 iterations ($1,946.5\ \mu\text{s}$) at tolerance $10^{-4}$ ($\max |\Delta T| = 0.027^\circ\text{C}$). However, on Medium/Fine meshes with strict tolerance ($10^{-6}$), SSOR spectral radius $\rho \approx 0.999$ requires $> 5,000$ iterations and honestly reports non-convergence (HTTP 422).
 
 ---
 
 ## 6. Mesh Convergence Behaviour
 
-As mesh is refined from coarse to fine, maximum temperature converges monotonically. This is expected for a well-posed linear elliptic problem with consistent FEM discretisation.
+Convergence analysis across discrete mesh refinement levels:
 
-The convergence rate for TET4 (linear elements) in the energy norm is:
+| Mesh Level | Nodes / DOFs | Tetrahedra | $T_{\max}$ [°C] | $T_{\text{avg}}$ [°C] | $R_{\text{th}}$ [K/W] | $\Delta T_{\max}$ [%] | Base IDW Discrepancy [%] |
+|------------|--------------|------------|-----------------|-----------------------|-----------------------|-----------------------|--------------------------|
+| Coarse     | 590          | 1,480      | 38.42           | 31.85                 | 0.895                 | Baseline              | Baseline                 |
+| Medium     | 1,944        | 5,920      | 39.81           | 32.41                 | 0.987                 | +3.62%                | 1.88%                    |
+| Fine       | 5,880        | 20,720     | 40.54           | 32.84                 | 1.036                 | +1.83%                | 1.12%                    |
 
-$$\|e\|_{H^1} = O(h^1)$$
-
-For smooth solutions, the pointwise error converges as:
-
-$$\|e\|_{L^\infty} \approx O(h^2)$$
+**Methodological Notes & Limitations:**
+- **Sampled Field Discrepancy:** The field metric evaluates the relative discrete $L_2$ difference across 600 fixed probe points inside the base plate using four-nearest-node Inverse Distance Weighting (IDW). It is an approximate base-domain sampled comparison, not a full-domain 3D FEM element interpolation.
+- **Extrapolation Limitation:** Three discrete mesh levels are insufficient for rigorous Grid Convergence Index (GCI) or Richardson extrapolation. The fine-grid peak temperature ($40.54^\circ\text{C}$) is reported strictly as the highest-resolution measured value, not a mathematically proven asymptotic limit.
 
 ---
 

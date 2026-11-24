@@ -102,7 +102,9 @@ struct MeshConvergenceReport {
     bool max_temp_converged{false};       // Peak temperature convergence criterion (rel change < 2%)
     bool field_converged{false};          // Field-level L2 convergence criterion (rel field diff < 5%)
     bool solver_converged{false};         // Numerical solver convergence at all levels
-    double asymptotic_estimate_c{0.0};
+    double fine_grid_max_temperature_c{0.0}; // Measured fine-grid peak temperature (highest-resolution result)
+    [[deprecated("Use fine_grid_max_temperature_c instead")]]
+    double asymptotic_estimate_c{0.0};       // Preserved for backwards compatibility
     std::string recommendation;
 };
 
