@@ -129,9 +129,43 @@ json handle_thermal_solve_request(const json& body, int& http_status) {
     auto sres = solver->solve(sys.K, sys.F, scfg);
 
     bool is_direct_ldlt = (sres.solver_name.find("LDLT") != std::string::npos || sres.solver_name.find("Cholesky") != std::string::npos);
-    bool solution_valid = sres.success &&
-                          (sres.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) &&
-                          sres.solution.allFinite();
+    bool is_cg = (sres.solver_name.find("Conjugate Gradient") != std::string::npos);
+
+    bool dim_ok = (sres.solution.size() == static_cast<Eigen::Index>(sys.dof_count));
+    bool finite_ok = dim_ok && sres.solution.allFinite();
+
+    // Independent residual calculation from original assembled system sys.K * T - sys.F
+    double indep_rel_res = 1.0;
+    bool residual_finite = false;
+    bool tolerance_ok = false;
+
+    if (dim_ok && finite_ok) {
+        Eigen::VectorXd r_eval = sys.K * sres.solution - sys.F;
+        double b_norm = sys.F.norm();
+        double r_norm = r_eval.norm();
+        indep_rel_res = (b_norm > 1e-15) ? (r_norm / b_norm) : r_norm;
+        residual_finite = std::isfinite(indep_rel_res);
+
+        if (is_direct_ldlt) {
+            // Direct solver machine-precision threshold
+            tolerance_ok = residual_finite && (indep_rel_res <= 1e-9);
+        } else if (is_cg) {
+            // Documented 1.5x allowance for floating point Krylov residual drift
+            double allowed = std::max(1e-12, scfg.tolerance * 1.5);
+            tolerance_ok = residual_finite && (indep_rel_res <= allowed);
+        } else {
+            // SSOR strictly requires meeting configured tolerance
+            tolerance_ok = residual_finite && (indep_rel_res <= scfg.tolerance);
+        }
+    }
+
+    // Preserve the independently evaluated residual for diagnostics
+    if (residual_finite) {
+        sres.residual_norm = indep_rel_res;
+    }
+
+    // The thermal API must not return success merely because solver internal flag is true
+    bool solution_valid = sres.success && dim_ok && finite_ok && residual_finite && tolerance_ok;
 
     // 1. THERMAL API FAILURE HANDLING:
     // If solver fails or solution is invalid, return HTTP 422 with outer success: false and inner data.success: false.
@@ -139,9 +173,20 @@ json handle_thermal_solve_request(const json& body, int& http_status) {
     // Withhold min/max/avg temperature, heat output, energy balance, and visual mesh contours.
     if (!solution_valid) {
         http_status = 422;
-        std::string diag_msg = sres.error_message.empty() 
-            ? "Numerical solver failed to reach specified convergence tolerance" 
-            : sres.error_message;
+        std::string diag_msg;
+        if (!dim_ok) {
+            diag_msg = "Solution dimension mismatch (" + std::to_string(sres.solution.size()) + " vs " + std::to_string(sys.dof_count) + ")";
+        } else if (!finite_ok) {
+            diag_msg = "Non-finite values (NaN/Inf) detected in solution vector";
+        } else if (!residual_finite) {
+            diag_msg = "Non-finite residual norm evaluated from assembled FEM system";
+        } else if (!tolerance_ok) {
+            diag_msg = "Residual norm (" + std::to_string(indep_rel_res) + ") failed convergence tolerance criterion (" + std::to_string(scfg.tolerance) + ")";
+        } else {
+            diag_msg = sres.error_message.empty() 
+                ? "Numerical solver failed to reach specified convergence tolerance" 
+                : sres.error_message;
+        }
         json data = {
             {"success", false},
             {"solver_name", sres.solver_name},

@@ -83,9 +83,11 @@ TEST(SolverBenchmark, MeshConvergenceStudy) {
     EXPECT_TRUE(cr.max_temp_converged); // Fine rel max temp change < 2.0%
     EXPECT_TRUE(cr.field_converged); // Fine rel field L2 diff < 5.0%
 
-    // Recommendation contains data-driven timing comparison
+    // Recommendation contains data-driven timing comparison, base-domain sampled discrepancy, and extrapolation limitation
     EXPECT_FALSE(cr.recommendation.empty());
     EXPECT_NE(cr.recommendation.find("Median Total Solve Time"), std::string::npos);
+    EXPECT_NE(cr.recommendation.find("Base-Domain Sampled Field Discrepancy"), std::string::npos);
+    EXPECT_NE(cr.recommendation.find("Extrapolation Limitation"), std::string::npos);
 }
 
 TEST(SolverBenchmark, AllBenchmarkTrialsValidationAndResidualAudit) {

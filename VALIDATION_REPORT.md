@@ -78,6 +78,8 @@ All tests are compiled into `test_all_phases.exe`.
 | SolverResidualVerificationAgainstOriginalSystem | Independent verification against original K and F | ✓ PASS |
 | ThermalAPIFailureSemanticsIntegration | Returns HTTP 422, outer & inner success: false, no fabricated stats | ✓ PASS |
 | ThermalAPISuccessSemanticsIntegration | Returns HTTP 200, outer & inner success: true, genuine physics | ✓ PASS |
+| RealHttpThermalSolveSuccessAndFailure | End-to-end TCP loopback HTTP route test via httplib::Server & Client | ✓ PASS |
+| ThermalAPIValidationRejectsResidualExceedingTolerance | Rejects solution exceeding residual tolerance threshold | ✓ PASS |
 
 ### 2.6 Benchmark Tests (`test_solver_benchmark.cpp`) — 3 tests
 
@@ -87,9 +89,9 @@ All tests are compiled into `test_all_phases.exe`.
 | MeshConvergenceStudy (multi-metric & L2 spatial probe field) | ✓ PASS |
 | AllBenchmarkTrialsValidationAndResidualAudit | ✓ PASS |
 
-**Total: 37/37 tests PASSED across 6 test suites (Phase 9)**
+**Total: 39/39 tests PASSED across 7 test suites (Phase 9)**
 **Legacy total: 45/45 tests PASSED (uew_tests.exe)**
-**Grand total: 82/82 tests PASSED (100% success rate)**
+**Grand total: 84/84 tests PASSED (100% success rate)**
 
 ---
 

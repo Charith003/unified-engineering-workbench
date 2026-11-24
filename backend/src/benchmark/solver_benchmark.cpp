@@ -114,35 +114,45 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
             solve_times.push_back(run_res.solve_time_ms);
 
             bool dim_ok = (run_res.solution.size() == static_cast<Eigen::Index>(sys.dof_count));
-            bool finite_ok = run_res.solution.allFinite();
+            bool finite_ok = dim_ok && run_res.solution.allFinite();
 
             // Independently calculate relative residual from original assembled K and F
             double indep_rel_res = 1.0;
+            bool res_finite = false;
+            bool tolerance_ok = false;
+
             if (dim_ok && finite_ok) {
                 Eigen::VectorXd r_eval = sys.K * run_res.solution - sys.F;
                 double b_norm = sys.F.norm();
-                if (b_norm < 1e-15) b_norm = 1.0;
-                indep_rel_res = r_eval.norm() / b_norm;
+                double r_norm = r_eval.norm();
+                indep_rel_res = (b_norm > 1e-15) ? (r_norm / b_norm) : r_norm;
+                res_finite = std::isfinite(indep_rel_res);
+
+                bool is_direct = (solver->name().find("LDLT") != std::string::npos || solver->name().find("Cholesky") != std::string::npos);
+                bool is_cg_solver = (solver->name().find("Conjugate Gradient") != std::string::npos);
+
+                if (is_direct) {
+                    // Direct solver machine-precision validation threshold (1e-9)
+                    tolerance_ok = res_finite && (indep_rel_res <= 1e-9);
+                } else if (is_cg_solver) {
+                    // CG with 1.5x allowance for floating point / Krylov residual drift
+                    double allowed = std::max(1e-12, config.tolerance * 1.5);
+                    tolerance_ok = res_finite && (indep_rel_res <= allowed);
+                } else {
+                    // SSOR requires meeting configured tolerance strictly
+                    tolerance_ok = res_finite && (indep_rel_res <= config.tolerance);
+                }
             }
             trial_residuals.push_back(indep_rel_res);
 
-            bool trial_ok = run_res.success && dim_ok && finite_ok;
-            if (trial_ok) {
-                // For iterative solvers, require independently calculated residual to satisfy configured tolerance
-                if (solver->name().find("Conjugate Gradient") != std::string::npos ||
-                    solver->name().find("Gauss-Seidel") != std::string::npos) {
-                    if (indep_rel_res > config.tolerance * 1.5) {
-                        trial_ok = false;
-                        if (first_failure_reason.empty()) {
-                            first_failure_reason = "Residual (" + std::to_string(indep_rel_res) + ") exceeded tolerance";
-                        }
-                    }
-                }
-            } else {
+            bool trial_ok = run_res.success && dim_ok && finite_ok && res_finite && tolerance_ok;
+            if (!trial_ok) {
                 if (first_failure_reason.empty()) {
-                    if (!run_res.success) first_failure_reason = run_res.error_message.empty() ? "Solver reported failure" : run_res.error_message;
-                    else if (!dim_ok) first_failure_reason = "Solution vector dimension mismatch";
+                    if (!dim_ok) first_failure_reason = "Solution vector dimension mismatch (" + std::to_string(run_res.solution.size()) + " vs " + std::to_string(sys.dof_count) + ")";
                     else if (!finite_ok) first_failure_reason = "Non-finite values in solution vector";
+                    else if (!res_finite) first_failure_reason = "Non-finite residual evaluated from assembled system";
+                    else if (!tolerance_ok) first_failure_reason = "Trial residual (" + std::to_string(indep_rel_res) + ") failed convergence criterion";
+                    else if (!run_res.success) first_failure_reason = run_res.error_message.empty() ? "Solver reported failure" : run_res.error_message;
                 }
             }
 
@@ -195,7 +205,8 @@ FullBenchmarkReport SolverBenchmark::run_benchmark(
 
         if (s_idx == 0) {
             // First solver is Sparse LDLT (Direct Reference)
-            if (metrics.success && representative_res.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) {
+            // Require all trials to succeed AND residual to satisfy direct solve precision (<= 1e-9)
+            if (metrics.success && representative_res.solution.size() == static_cast<Eigen::Index>(sys.dof_count) && metrics.residual_norm <= 1e-9) {
                 direct_ref_valid = true;
                 ref_solution = representative_res.solution;
                 ref_median_time_ms = std::max(0.001, metrics.median_total_time_ms);
@@ -380,6 +391,8 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         cr.max_temp_converged = all_cholesky_converged && (fine.rel_max_temp_change_percent < 2.0);
         cr.field_converged = all_cholesky_converged && (fine.rel_field_l2_difference_percent < 5.0);
         cr.is_converged = cr.solver_converged && cr.max_temp_converged && cr.field_converged;
+        
+        // Fine-grid maximum temperature reported as highest-resolution measured value (not a proven asymptotic limit)
         cr.asymptotic_estimate_c = fine.max_temperature_c;
 
         // Calculate actual measured timing ratios from measured data (Median Total Solve Time)
@@ -395,19 +408,23 @@ MeshConvergenceReport SolverBenchmark::run_mesh_convergence(
         oss << std::fixed << std::setprecision(2);
 
         if (!all_cholesky_converged) {
-            oss << "Sparse LDLT reference solver failed to converge at one or more mesh levels; mesh convergence is inconclusive.";
+            oss << "Sparse LDLT reference solver failed to converge at one or more mesh levels; mesh convergence evaluation is inconclusive.";
         } else {
-            oss << "Solver Convergence: Sparse LDLT reference and CG converged across all 3 mesh levels; SSOR did not converge within the 5,000 iteration budget. ";
-            oss << "Max-Temperature Convergence: " << fine.rel_max_temp_change_percent << "% relative change between Medium and Fine ("
+            oss << "Measured Mesh Levels: Coarse (" << coarse.node_count << " nodes, T_max = " << coarse.max_temperature_c << " °C, T_avg = " << coarse.avg_temperature_c << " °C, R_th = " << coarse.thermal_resistance_k_w << " K/W), "
+                << "Medium (" << medium.node_count << " nodes, T_max = " << medium.max_temperature_c << " °C, ΔT_max = " << medium.rel_max_temp_change_percent << "%, ΔT_avg = " << medium.rel_avg_temp_change_percent << "%, ΔR_th = " << medium.rel_thermal_resistance_change_percent << "%), "
+                << "Fine (" << fine.node_count << " nodes, T_max = " << fine.max_temperature_c << " °C, ΔT_max = " << fine.rel_max_temp_change_percent << "%, ΔT_avg = " << fine.rel_avg_temp_change_percent << "%, ΔR_th = " << fine.rel_thermal_resistance_change_percent << "%). ";
+            oss << "Solver Convergence: Sparse LDLT direct reference and CG converged across all 3 mesh levels; SSOR did not converge within the 5,000 iteration budget. ";
+            oss << "Maximum-Temperature Difference: " << fine.rel_max_temp_change_percent << "% relative change between Medium and Fine ("
                 << (cr.max_temp_converged ? "satisfied < 2.0% threshold" : "exceeds 2.0% threshold") << "). ";
-            oss << "Field-Level Convergence: Relative L2 temperature field difference across 600 spatial domain probe points is "
+            oss << "Base-Domain Sampled Field Discrepancy: Relative discrete L2 discrepancy across 600 base probe points using approximate 4-node IDW is "
                 << fine.rel_field_l2_difference_percent << "% ("
-                << (cr.field_converged ? "satisfied < 5.0% threshold" : "exceeds 5.0% threshold") << "). ";
-            oss << "Asymptotic Status: 3 mesh levels (Coarse: " << coarse.node_count << ", Medium: " << medium.node_count << ", Fine: " << fine.node_count
-                << " DOFs) demonstrate clear monotonic reduction. However, 3 levels are insufficient to rigorously establish asymptotic Grid Convergence Index (GCI) extrapolation without higher-order refinement. ";
+                << (cr.field_converged ? "satisfied < 5.0% threshold" : "exceeds 5.0% threshold") 
+                << "; note: this evaluates base-domain sampled discrepancy via 4-node IDW rather than full-domain 3D FEM element interpolation). ";
+            oss << "Extrapolation Limitation: Three mesh levels are insufficient for rigorous Grid Convergence Index (GCI) or Richardson extrapolation. "
+                << "The value " << fine.max_temperature_c << " °C is reported as the highest-resolution fine-grid result, not a mathematically proven asymptotic limit. ";
             oss << "Timing Recommendation (comparing Median Total Solve Time): Medium mesh (" << med_chol_time << " ms) provides a "
                 << std::setprecision(1) << actual_med_chol_speedup << "x speedup over Fine mesh (" << fine_chol_time
-                << " ms) for Sparse LDLT, making Medium the recommended engineering balance for parametric studies.";
+                << " ms) for Sparse LDLT, making Medium optimal for interactive parametric engineering studies.";
         }
         cr.recommendation = oss.str();
     }

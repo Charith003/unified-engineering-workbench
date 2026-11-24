@@ -47,11 +47,25 @@ SolverResult CholeskySolver::solve(
         return res;
     }
 
-    // Residual computation: ||A*x - b||_2
+    // Solution dimension and finite value validation
+    if (res.solution.size() != b.size() || !res.solution.allFinite()) {
+        res.success = false;
+        res.error_message = "Sparse LDLT produced non-finite or incorrect dimension solution";
+        return res;
+    }
+
+    // Independent residual verification: ||A*x - b||_2 / ||b||_2 with safe near-zero handling
     Eigen::VectorXd r = A * res.solution - b;
     double b_norm = b.norm();
     res.absolute_residual = r.norm();
     res.residual_norm = (b_norm > 1e-15) ? (res.absolute_residual / b_norm) : res.absolute_residual;
+
+    // Direct solver machine-precision validation threshold (1e-9)
+    if (!std::isfinite(res.residual_norm) || res.residual_norm > 1e-9) {
+        res.success = false;
+        res.error_message = "Sparse LDLT residual verification failed: relative residual = " + std::to_string(res.residual_norm);
+        return res;
+    }
 
     // Memory estimation: sparsity factor representation
     res.estimated_memory_bytes = A.nonZeros() * (sizeof(double) + sizeof(int)) * 2;

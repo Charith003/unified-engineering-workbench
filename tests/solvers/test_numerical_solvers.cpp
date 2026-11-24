@@ -7,6 +7,8 @@
 #include "core/geometry/heat_sink_geometry.hpp"
 #include "api/heat_sink_api.hpp"
 #include <limits>
+#include <thread>
+#include <chrono>
 
 using namespace uew::solvers;
 using namespace uew::thermal;
@@ -332,4 +334,90 @@ TEST_F(NumericalSolversTest, ThermalAPISuccessSemanticsIntegration) {
     EXPECT_FALSE(data["boundary_faces"].empty());
     EXPECT_FALSE(data["elements"].empty());
     EXPECT_EQ(data["nodal_temperatures"].size(), data["nodes"].size());
+}
+
+TEST_F(NumericalSolversTest, ThermalAPIValidationRejectsResidualExceedingTolerance) {
+    // QA Requirement 1 & 4: Helper validation rejects solver result if residual exceeds tolerance
+    // Even if internal success flag were claimed true, independent verification must fail it
+    nlohmann::json req_body = {
+        {"resolution", "coarse"},
+        {"solver", "gauss_seidel"},
+        {"tolerance", 1e-12},
+        {"max_iterations", 5}
+    };
+
+    int http_status = 0;
+    nlohmann::json resp = uew::api::handle_thermal_solve_request(req_body, http_status);
+
+    EXPECT_EQ(http_status, 422);
+    EXPECT_FALSE(resp["success"].get<bool>());
+    EXPECT_FALSE(resp["data"]["success"].get<bool>());
+    EXPECT_TRUE(resp["data"]["nodal_temperatures"].empty());
+}
+
+TEST(HttpRouteIntegrationTest, RealHttpThermalSolveSuccessAndFailure) {
+    // QA Requirement 4: True HTTP route integration test sending real HTTP requests to local server
+    httplib::Server svr;
+    uew::api::register_heat_sink_routes(svr);
+    int port = svr.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+
+    std::thread svr_thread([&svr]() {
+        svr.listen_after_bind();
+    });
+
+    // Wait until server is listening
+    for (int retry = 0; retry < 100 && !svr.is_running(); ++retry) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(svr.is_running());
+
+    httplib::Client cli("127.0.0.1", port);
+    cli.set_connection_timeout(5, 0);
+    cli.set_read_timeout(10, 0);
+
+    // 1. Real HTTP request: Successful Sparse LDLT solve (expect HTTP 200)
+    nlohmann::json success_body = {
+        {"resolution", "coarse"},
+        {"solver", "cholesky"}
+    };
+    auto res_ok = cli.Post("/api/heat-sink/thermal/solve", success_body.dump(), "application/json");
+    ASSERT_TRUE(res_ok);
+    EXPECT_EQ(res_ok->status, 200);
+
+    auto json_ok = nlohmann::json::parse(res_ok->body, nullptr, false);
+    ASSERT_FALSE(json_ok.is_discarded());
+    EXPECT_TRUE(json_ok["success"].get<bool>());
+    EXPECT_TRUE(json_ok["data"]["success"].get<bool>());
+    EXPECT_EQ(json_ok["data"]["solver_name"].get<std::string>(), "Sparse LDLT");
+    EXPECT_GT(json_ok["data"]["max_temperature_c"].get<double>(), 25.0);
+    EXPECT_FALSE(json_ok["data"]["nodal_temperatures"].empty());
+
+    // 2. Real HTTP request: Deliberately non-convergent SSOR solve (expect HTTP 422)
+    nlohmann::json fail_body = {
+        {"resolution", "coarse"},
+        {"solver", "gauss_seidel"},
+        {"tolerance", 1e-15},
+        {"max_iterations", 2}
+    };
+    auto res_fail = cli.Post("/api/heat-sink/thermal/solve", fail_body.dump(), "application/json");
+    ASSERT_TRUE(res_fail);
+    EXPECT_EQ(res_fail->status, 422);
+
+    auto json_fail = nlohmann::json::parse(res_fail->body, nullptr, false);
+    ASSERT_FALSE(json_fail.is_discarded());
+    EXPECT_FALSE(json_fail["success"].get<bool>());
+    EXPECT_FALSE(json_fail["data"]["success"].get<bool>());
+    EXPECT_FALSE(json_fail["error"].get<std::string>().empty());
+    EXPECT_FALSE(json_fail["data"].contains("min_temperature_c"));
+    EXPECT_FALSE(json_fail["data"].contains("max_temperature_c"));
+    EXPECT_TRUE(json_fail["data"]["nodal_temperatures"].empty());
+    EXPECT_TRUE(json_fail["data"]["nodes"].empty());
+    EXPECT_TRUE(json_fail["data"]["elements"].empty());
+
+    // Stop server and join thread
+    svr.stop();
+    if (svr_thread.joinable()) {
+        svr_thread.join();
+    }
 }

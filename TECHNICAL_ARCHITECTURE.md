@@ -93,22 +93,29 @@ $$f^e_i = \frac{q'' \cdot A}{3}$$
 
 | Solver               | File                              | Algorithm                          |
 |----------------------|-----------------------------------|------------------------------------|
-| `CholeskySolver`     | `src/solvers/cholesky_solver.cpp` | `Eigen::SimplicialLDLT`            |
+| `CholeskySolver`     | `src/solvers/cholesky_solver.cpp` | Sparse LDLT (direct root-free Cholesky $A = P^T L D L^T P$ via `Eigen::SimplicialLDLT`) |
 | `ConjugateGradientSolver` | `src/solvers/conjugate_gradient_solver.cpp` | CG + Jacobi preconditioner |
 | `GaussSeidelSolver`  | `src/solvers/gauss_seidel_solver.cpp` | SSOR (symmetric forward+backward sweep) |
 
-All solvers implement `ISolver` and receive the same `AssembledThermalSystem` (triplet sparse K, dense F).
+All solvers implement `ISolver` and receive the same `AssembledThermalSystem` (triplet sparse K, dense F). Every solver validates solution dimension, finite values, and enforces independent relative residual $\|K T - F\|_2 / \|F\|_2$ validation.
 
 ### 2.5 Benchmark Engine — `backend/src/benchmark/solver_benchmark.cpp`
 
 Protocol:
 1. Assemble K and F once for the given mesh.
-2. For each solver: 1 warm-up run (discarded) + N measured trials.
-3. Report **median** wall-clock time (μs resolution via `std::chrono::high_resolution_clock`).
-4. Compute residual ‖KT − F‖₂ / ‖F‖₂.
-5. Compute max |ΔT| vs Cholesky reference solution.
+2. For each solver: 1 warm-up run (discarded) + N measured trials (each trial strictly validated for dimension, finite values, and independent residual norm).
+3. Record detailed timing breakdown:
+   - Sparse LDLT: Factorization time ($P^T L D L^T P$), Solve time, and Total execution time.
+   - CG: Jacobi preconditioner setup time, Iterative solve time, and Total execution time.
+   - SSOR: Setup time (matrix ordering/diagonal extraction), Sweep solve time, and Total execution time.
+4. Report **median** wall-clock time ($\mu$s resolution via `std::chrono::high_resolution_clock`).
+5. Independently compute relative residual $\|KT − F\|_2 / \|F\|_2$ using assembled system matrix and RHS.
+6. Compute max $|\Delta T|$ and $L_2$ error vs Sparse LDLT direct reference solution.
 
-Mesh convergence study runs the full protocol at Coarse → Medium → Fine.
+Mesh convergence study runs the full protocol at Coarse $\to$ Medium $\to$ Fine:
+- Multi-metric tracking: $T_{\max}$, $T_{\text{avg}}$, and Thermal Resistance $R_{\text{th}}$.
+- Base-domain sampled temperature field discrepancy evaluated across 600 spatial probe points using 4-node Inverse Distance Weighting (IDW) interpolation.
+- Strict reporting: Avoids unsupported monotonicity or asymptotic GCI claims on 3 discrete grid levels, reporting exact measured metrics and timings.
 
 ### 2.6 HTTP API — `backend/src/api/heat_sink_api.cpp`
 
