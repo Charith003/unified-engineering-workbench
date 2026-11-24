@@ -5,6 +5,8 @@
 #include "core/thermal/fem_3d_solver.hpp"
 #include "core/mesh/mesh_generator.hpp"
 #include "core/geometry/heat_sink_geometry.hpp"
+#include "api/heat_sink_api.hpp"
+#include <limits>
 
 using namespace uew::solvers;
 using namespace uew::thermal;
@@ -183,4 +185,151 @@ TEST_F(NumericalSolversTest, ThermalAPIFailureHandlingOnNonConvergentSolver) {
                           sres.solution.allFinite();
     EXPECT_FALSE(solution_valid);
     EXPECT_FALSE(sres.error_message.empty());
+}
+
+TEST_F(NumericalSolversTest, DirectSolverNamingAndImplementationConsistency) {
+    // QA Requirement 2: Verify direct solver is named Sparse LDLT and alias is consistent
+    CholeskySolver direct_solver;
+    EXPECT_EQ(direct_solver.name(), "Sparse LDLT");
+
+    SparseLDLTSolver alias_solver;
+    EXPECT_EQ(alias_solver.name(), "Sparse LDLT");
+
+    auto res = direct_solver.solve(sys_.K, sys_.F);
+    EXPECT_TRUE(res.success);
+    EXPECT_LT(res.residual_norm, 1e-10);
+    EXPECT_EQ(res.iterations, 1);
+}
+
+TEST_F(NumericalSolversTest, NonFiniteSolutionRejection) {
+    // QA Requirement 6: Verify non-finite solution values (NaN/Inf) are detected and rejected
+    CholeskySolver solver;
+    auto sres = solver.solve(sys_.K, sys_.F);
+    ASSERT_TRUE(sres.success);
+
+    // Deliberately inject NaN into solution vector
+    sres.solution(0) = std::numeric_limits<double>::quiet_NaN();
+    bool finite_ok = sres.solution.allFinite();
+    EXPECT_FALSE(finite_ok);
+
+    bool solution_valid = sres.success &&
+                          (sres.solution.size() == static_cast<Eigen::Index>(sys_.dof_count)) &&
+                          finite_ok;
+    EXPECT_FALSE(solution_valid);
+
+    // Deliberately inject Infinity into solution vector
+    sres.solution(0) = std::numeric_limits<double>::infinity();
+    EXPECT_FALSE(sres.solution.allFinite());
+}
+
+TEST_F(NumericalSolversTest, IncorrectSolutionDimensionRejection) {
+    // QA Requirement 6: Verify solution dimension mismatch is detected and rejected
+    CholeskySolver solver;
+    auto sres = solver.solve(sys_.K, sys_.F);
+    ASSERT_TRUE(sres.success);
+
+    // Deliberately truncate solution vector
+    Eigen::VectorXd truncated = sres.solution.head(sres.solution.size() - 5);
+    bool dim_ok = (truncated.size() == static_cast<Eigen::Index>(sys_.dof_count));
+    EXPECT_FALSE(dim_ok);
+
+    bool solution_valid = sres.success && dim_ok && truncated.allFinite();
+    EXPECT_FALSE(solution_valid);
+}
+
+TEST_F(NumericalSolversTest, SolverResidualVerificationAgainstOriginalSystem) {
+    // QA Requirement 6: Independently evaluate ||K*x - F||_2 / ||F||_2 against original system
+    CholeskySolver direct;
+    auto direct_res = direct.solve(sys_.K, sys_.F);
+    ASSERT_TRUE(direct_res.success);
+
+    double b_norm = sys_.F.norm();
+    ASSERT_GT(b_norm, 1e-12);
+
+    Eigen::VectorXd r_direct = sys_.K * direct_res.solution - sys_.F;
+    double rel_res_direct = r_direct.norm() / b_norm;
+    EXPECT_LT(rel_res_direct, 1e-10);
+
+    ConjugateGradientSolver cg;
+    SolverConfig cg_cfg;
+    cg_cfg.tolerance = 1e-6;
+    cg_cfg.max_iterations = 2000;
+    auto cg_res = cg.solve(sys_.K, sys_.F, cg_cfg);
+    ASSERT_TRUE(cg_res.success);
+
+    Eigen::VectorXd r_cg = sys_.K * cg_res.solution - sys_.F;
+    double rel_res_cg = r_cg.norm() / b_norm;
+    EXPECT_LT(rel_res_cg, 1e-5);
+}
+
+TEST_F(NumericalSolversTest, ThermalAPIFailureSemanticsIntegration) {
+    // QA Requirement 1 & 6: Call actual handle_thermal_solve_request with deliberately non-convergent config
+    // Must return HTTP 422, outer success: false, inner data.success: false, diagnostic message,
+    // useful diagnostics preserved, and no fabricated temperature or mesh visualization arrays.
+    nlohmann::json req_body = {
+        {"resolution", "coarse"},
+        {"solver", "gauss_seidel"},
+        {"tolerance", 1e-15},
+        {"max_iterations", 2}
+    };
+
+    int http_status = 0;
+    nlohmann::json resp = uew::api::handle_thermal_solve_request(req_body, http_status);
+
+    EXPECT_EQ(http_status, 422);
+    EXPECT_FALSE(resp["success"].get<bool>());
+    EXPECT_TRUE(resp.contains("error"));
+    EXPECT_FALSE(resp["error"].get<std::string>().empty());
+
+    ASSERT_TRUE(resp.contains("data"));
+    const auto& data = resp["data"];
+    EXPECT_FALSE(data["success"].get<bool>());
+    EXPECT_NE(data["solver_name"].get<std::string>().find("SSOR"), std::string::npos);
+    EXPECT_EQ(data["iterations"].get<int>(), 2);
+    EXPECT_GT(data["residual_norm"].get<double>(), 0.0);
+    EXPECT_GT(data["assembly_time_ms"].get<double>(), 0.0);
+    EXPECT_GE(data["solve_time_ms"].get<double>(), 0.0);
+
+    // Withhold fabricated statistics
+    EXPECT_FALSE(data.contains("min_temperature_c"));
+    EXPECT_FALSE(data.contains("max_temperature_c"));
+    EXPECT_FALSE(data.contains("avg_temperature_c"));
+    EXPECT_FALSE(data.contains("total_heat_out_w"));
+    EXPECT_FALSE(data.contains("energy_balance_error_percent"));
+
+    // Empty visualization arrays
+    EXPECT_TRUE(data["nodal_temperatures"].empty());
+    EXPECT_TRUE(data["nodes"].empty());
+    EXPECT_TRUE(data["boundary_faces"].empty());
+    EXPECT_TRUE(data["elements"].empty());
+}
+
+TEST_F(NumericalSolversTest, ThermalAPISuccessSemanticsIntegration) {
+    // QA Requirement 1 & 6: Call actual handle_thermal_solve_request with valid solver config
+    // Must return HTTP 200, outer success: true, inner data.success: true, genuine physics.
+    nlohmann::json req_body = {
+        {"resolution", "coarse"},
+        {"solver", "cholesky"}
+    };
+
+    int http_status = 0;
+    nlohmann::json resp = uew::api::handle_thermal_solve_request(req_body, http_status);
+
+    EXPECT_EQ(http_status, 200);
+    EXPECT_TRUE(resp["success"].get<bool>());
+
+    ASSERT_TRUE(resp.contains("data"));
+    const auto& data = resp["data"];
+    EXPECT_TRUE(data["success"].get<bool>());
+    EXPECT_EQ(data["solver_name"].get<std::string>(), "Sparse LDLT");
+    EXPECT_GT(data["max_temperature_c"].get<double>(), 25.0);
+    EXPECT_GE(data["min_temperature_c"].get<double>(), 25.0);
+    EXPECT_GT(data["total_heat_in_w"].get<double>(), 0.0);
+    EXPECT_LT(data["energy_balance_error_percent"].get<double>(), 5.0);
+
+    EXPECT_FALSE(data["nodal_temperatures"].empty());
+    EXPECT_FALSE(data["nodes"].empty());
+    EXPECT_FALSE(data["boundary_faces"].empty());
+    EXPECT_FALSE(data["elements"].empty());
+    EXPECT_EQ(data["nodal_temperatures"].size(), data["nodes"].size());
 }

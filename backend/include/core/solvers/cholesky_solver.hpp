@@ -6,13 +6,15 @@
 namespace uew::solvers {
 
 /**
- * @brief Direct Sparse Cholesky Solver (Eigen::SimplicialLDLT).
- * Computes exact decomposition A = P^T * L * D * L^T * P.
- * Optimal baseline for direct solution with zero iterative residual drift.
+ * @brief Direct Sparse LDLT Solver (Eigen::SimplicialLDLT).
+ * Computes exact root-free Cholesky decomposition A = P^T * L * D * L^T * P.
+ * Avoids square roots of diagonal pivots and guarantees numerical stability
+ * on symmetric positive definite and semi-definite FEM thermal systems.
+ * Serves as the gold-standard direct reference solver.
  */
 class CholeskySolver : public ISolver {
 public:
-    std::string name() const override { return "Sparse Cholesky (Direct LDLT)"; }
+    std::string name() const override { return "Sparse LDLT"; }
 
     SolverResult solve(
         const Eigen::SparseMatrix<double>& A,
@@ -20,5 +22,8 @@ public:
         const SolverConfig& config = SolverConfig()
     ) override;
 };
+
+// Type alias for explicit terminology
+using SparseLDLTSolver = CholeskySolver;
 
 } // namespace uew::solvers

@@ -21,7 +21,7 @@ SolverResult CholeskySolver::solve(
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
-    // Direct sparse Cholesky factorization
+    // Direct sparse LDLT factorization (root-free Cholesky variant)
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt;
     ldlt.compute(A);
 
@@ -30,11 +30,11 @@ SolverResult CholeskySolver::solve(
 
     if (ldlt.info() != Eigen::Success) {
         res.success = false;
-        res.error_message = "Cholesky decomposition failed (matrix may be singular or indefinite)";
+        res.error_message = "Sparse LDLT factorization failed (matrix may be singular or indefinite)";
         return res;
     }
 
-    // Solve Ly = b, DL^T x = y
+    // Solve L*y = b, D*L^T*x = y
     res.solution = ldlt.solve(b);
 
     auto t_solve = std::chrono::high_resolution_clock::now();
@@ -43,7 +43,7 @@ SolverResult CholeskySolver::solve(
 
     if (ldlt.info() != Eigen::Success) {
         res.success = false;
-        res.error_message = "Cholesky back-substitution solve failed";
+        res.error_message = "Sparse LDLT back-substitution solve failed";
         return res;
     }
 

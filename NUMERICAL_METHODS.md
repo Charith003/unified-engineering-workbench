@@ -122,19 +122,22 @@ This corrects the previous erroneous assignment to the bottom face (z ≤ 1×10�
 
 ## 3. Numerical Solvers
 
-### 3.1 Sparse Cholesky (SimplicialLDLT)
+### 3.1 Sparse LDLT Direct Solver (SimplicialLDLT)
 
-The assembled K is symmetric positive definite (SPD) for well-posed thermal problems. Eigen's `SimplicialLDLT` performs:
+The assembled stiffness matrix $K$ is symmetric positive definite (SPD) for well-posed thermal problems. Rather than standard Cholesky $L L^T$ (which requires taking square roots of diagonal pivots), the reference direct solver employs Eigen's `SimplicialLDLT`, performing the exact root-free factorization:
 
-$$K = L D L^T$$
+$$K = P^T L D L^T P$$
 
-where L is lower triangular and D is diagonal. The solve is:
+where $P$ is a fill-reducing fill-in permutation matrix, $L$ is a unit lower triangular matrix, and $D$ is a diagonal matrix. The solve sequence is:
 
-$$K \mathbf{T} = \mathbf{F} \Rightarrow L D L^T \mathbf{T} = \mathbf{F}$$
+$$L \mathbf{y} = P \mathbf{F}, \quad D \mathbf{z} = \mathbf{y}, \quad L^T (P \mathbf{T}) = \mathbf{z}$$
 
-via forward/back substitution in $O(nnz \cdot k)$ where k is the fill-in factor.
+via forward and backward triangular substitution in $O(\text{nnz} \cdot k)$ operations (where $k$ is the average fill-in factor).
 
-**Use:** Reference solver. Deterministic, direct, residual < 1×10⁻¹⁰.
+**Why Sparse LDLT over LLT:**
+- Root-free: Eliminates square-root evaluations on diagonal entries, avoiding breakdown if numerical rounding produces tiny pivots.
+- Exactness: Evaluates machine-precision direct solution with relative residual $\|r\|_2 / \|F\|_2 < 1 \times 10^{-10}$.
+- Gold-standard reference: Used as the benchmark baseline against which all iterative solvers (CG, SSOR) and mesh levels are evaluated.
 
 ### 3.2 Conjugate Gradient (Jacobi Preconditioned)
 
@@ -174,13 +177,20 @@ $$x_i^{(k+1)} = \frac{1}{K_{ii}} \left( F_i - \sum_{j < i} K_{ij} x_j^{(k)} - \s
 
 **Use:** Demonstrates classical stationary iterative solvers and their limitations on stiff 3D FEM matrices. Compare with CG, which converges in far fewer iterations.
 
-### 3.4 API Solution Validation Contract
+### 3.4 API Solution Validation Contract & Failure Semantics
 
 To guarantee that invalid or non-convergent numerical solutions are never presented as valid thermal physics:
 1. **Convergence Status Check:** The solver must report `sres.success == true`.
 2. **DOF Dimension Check:** The resulting solution vector size must strictly equal `sys.dof_count`.
 3. **Finite Value Check:** All vector elements must be finite (`sres.solution.allFinite()`).
-4. **Structured Failure Response:** If any check fails, the API returns `success = false`, sets an informative error message, and withholds computation of min/max/average temperature, heat flux output, and global energy balance.
+4. **Structured Failure Response (HTTP 422):** If any check fails, the API responds with:
+   - HTTP status: `422 Unprocessable Entity` (indicating a well-formed request whose numerical solve failed convergence)
+   - Outer status: `success: false`
+   - Inner payload: `data.success: false`
+   - Diagnostic status message explaining the cause (e.g. "Maximum iterations reached (5000/5000)")
+   - **Diagnostic telemetry preserved:** `assembly_time_ms`, `solve_time_ms`, `iterations`, `residual_norm`, `memory_kb`, `solver_name`
+   - **Withheld downstream metrics:** Minimum, maximum, average temperatures, total heat output, and global energy balance error are strictly omitted from the payload
+   - **Empty visualization arrays:** `nodal_temperatures`, `nodes`, `boundary_faces`, and `elements` are returned as empty arrays `[]` to prevent rendering false physics.
 
 ---
 
@@ -208,6 +218,17 @@ To guarantee that invalid or non-convergent numerical solutions are never presen
 | Heat source     | 30×25 mm |
 | Heat generation | 15 W     |
 | Heat density Q  | 15 / (0.030 × 0.025 × 0.008) W/m³ |
+
+### 4.3 Mounting Hole Representation in Structured 5-Tet Mesh
+
+The four corner mounting holes (3.2 mm diameter for standard M3 hardware) are approximated in the structured hexahedral-to-tetrahedral decomposition as boundary condition zones (Dirichlet fixed mounting temperature or non-convecting adiabatic zones) at their physical $(x, y)$ coordinates:
+- Hole 1: $(8\text{ mm}, 8\text{ mm})$
+- Hole 2: $(112\text{ mm}, 8\text{ mm})$
+- Hole 3: $(8\text{ mm}, 72\text{ mm})$
+- Hole 4: $(112\text{ mm}, 72\text{ mm})$
+
+**Explicit CAD Approximation Notice:**
+They are **not** modeled as exact conforming circular CAD cutouts in the structured 5-tet mesh or ASCII STL export. Conforming cylindrical cutouts would require non-uniform unstructured Delaunay/Voronoi tetrahedralization (e.g. TetGen/Netgen), which introduces irregular sliver elements and compromises structured mesh grading. The parametric boundary zone approximation ensures consistent topology, volume metrics, and zero inverted elements across all mesh levels.
 
 ---
 
@@ -240,6 +261,20 @@ To inspect volumetric mesh topology without artificial interior decors:
 - Each linear tetrahedron comprises 6 unique internal edges: $(n_0, n_1), (n_0, n_2), (n_0, n_3), (n_1, n_2), (n_1, n_3), (n_2, n_3)$.
 - Edge pairs are uniquely deduplicated across adjacent tetrahedral elements to generate an authentic internal wireframe.
 - A dynamic local clipping plane normal to the Z-axis ($z \le z_{\text{cut}}$) permits cross-sectional examination of core temperature gradients and interior volumetric tetrahedra.
+
+### 5.4 Spatial Domain Probe Grid for Mesh Field Convergence
+
+Comparing raw nodal solution vectors between meshes of different resolutions (e.g. 590 DOFs vs 1,944 DOFs) is mathematically invalid due to incompatible discrete function spaces.
+
+To evaluate field-level convergence rigorously without vector truncation or padding, UEW deploys an independent 600-point 3D Cartesian spatial probe grid distributed through the solid domain volume:
+
+$$\mathbf{p}_k = (x_i, y_j, z_l), \quad x_i \in (0, L), \, y_j \in (0, W), \, z_l \in (0, t_{\text{base}})$$
+
+At each probe point, the temperature field $T^{(m)}(\mathbf{p}_k)$ is evaluated using local 4-node Inverse Distance Weighting (IDW) from the surrounding tetrahedral nodes. The discrete relative $L_2$ field difference between successive mesh levels is:
+
+$$\varepsilon_{\text{field}} = \frac{\sqrt{\sum_{k=1}^{600} \left( T^{(i)}(\mathbf{p}_k) - T^{(i-1)}(\mathbf{p}_k) \right)^2}}{\sqrt{\sum_{k=1}^{600} \left( T^{(i)}(\mathbf{p}_k) \right)^2}} \times 100\%$$
+
+This ensures that field-level convergence is physically and mathematically sound.
 
 ---
 

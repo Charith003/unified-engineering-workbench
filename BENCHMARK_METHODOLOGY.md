@@ -22,20 +22,26 @@ All three solvers receive **identical** inputs:
 
 ### 2.2 Independent Variable
 
-Solver type: Cholesky (direct), Conjugate Gradient (iterative Krylov), Symmetric Gauss-Seidel (iterative stationary).
+Solver type:
+- **Sparse LDLT (Direct Reference):** Root-free Cholesky factorization ($A = P^T L D L^T P$) via `Eigen::SimplicialLDLT`.
+- **Conjugate Gradient (Iterative Krylov):** Jacobi-preconditioned Krylov subspace solver.
+- **Symmetric Gauss-Seidel / SSOR (Iterative Stationary):** Symmetric forward/backward relaxation sweeps.
 
 ### 2.3 Dependent Variables
 
 | Metric              | Symbol          | Description                              |
 |---------------------|-----------------|------------------------------------------|
-| Solve time          | t_median [μs]   | Median wall-clock time over N trials     |
-| Min / Max time      | t_min, t_max    | Trial distribution bounds                |
-| Relative residual   | ‖r‖₂/‖F‖₂      | Computed from original K and F after solve |
-| Max temperature deviation | max|ΔT| [K] | vs Cholesky reference (only if both converged) |
-| Speedup             | S = t_Cholesky / t_solver | Relative to Cholesky direct reference |
-| Memory usage        | Mem [KB]        | Approximate solver working storage       |
+| Total solve time    | t_median [ms]   | Median total wall-clock time over N trials |
+| Min / Max time      | t_min, t_max    | Measured trial distribution bounds       |
+| Factorization time  | t_fact [ms]     | Direct solver numerical factorization only (Sparse LDLT) |
+| Setup time          | t_setup [ms]    | Preconditioner/diagonal inversion setup (CG / SSOR) |
+| Iteration time      | t_solve [ms]    | Triangular solve or Krylov iteration loop |
+| Relative residual   | ‖r‖₂/‖F‖₂      | Independently evaluated from original assembled K and F |
+| Max temperature deviation | max|ΔT| [K] | vs Sparse LDLT reference (only if both converged) |
+| Speedup             | S = t_LDLT / t_solver | Relative to Sparse LDLT direct reference |
+| Memory usage        | Mem [KB]        | Measured working storage                 |
 | Iterations          | iter            | (Iterative solvers only)                 |
-| Convergence status  | success/failed  | Strictly `true` only when tolerance met before max_iterations |
+| Convergence status  | success/failed  | Strictly `true` only when all trials satisfy criteria |
 
 ---
 
@@ -48,14 +54,25 @@ Before measurement begins, one complete solve is performed and discarded. This e
 - Dynamic CPU frequency scaling (turbo boost) has stabilised.
 - JIT-style OS paging effects are avoided.
 
-### 3.2 Measured Trials
+### 3.2 Measured Trials & Multi-Trial Validation Protocol
 
-N consecutive timed solves are performed. Each trial:
-1. Reset solution vector T to zero.
-2. Record start time (`std::chrono::high_resolution_clock::now()`).
-3. Execute solver.
-4. Record end time.
-5. Store elapsed duration in microseconds.
+N consecutive timed solves are performed. Each trial undergoes rigorous validation:
+1. Reset solution vector $\mathbf{T}$ to zero.
+2. Record high-resolution start timestamp.
+3. Execute solver on identical assembled matrix $K$ and load vector $F$.
+4. Record high-resolution end timestamp.
+5. **Solution validity checks on every trial:**
+   - Dimension check: $\text{size}(\mathbf{T}) == \text{dof\_count}$.
+   - Finite value check: $\mathbf{T}$ must be 100% free of NaN and Inf values.
+   - **Independent residual evaluation:** Rather than relying on solver self-reporting, the benchmark engine independently computes:
+     $$r_{\text{rel}} = \frac{\|K \mathbf{T} - F\|_2}{\|F\|_2}$$
+     directly from the original assembled system.
+   - For iterative solvers, require $r_{\text{rel}} \le \text{tolerance} \times 1.5$.
+6. **Strict All-Trial Success Requirement:**
+   - A solver is only reported as `success = true` if **all $N$ attempted trials** satisfy convergence criteria.
+   - A successful final trial **cannot** mask an earlier trial that failed.
+   - If any trial fails, `success` is set to `false`, reporting the exact failure count (e.g. `1/5 trials failed`) and clarifying that the median timing represents all attempted trials.
+   - Individual trial timings (`trial_times_ms`) and trial residuals (`trial_residuals`) are fully preserved in the API report.
 
 ### 3.3 Timing Breakdown & Metrics Reported
 
@@ -113,29 +130,42 @@ $$\max_i |T_i^{\text{solver}} - T_i^{\text{Cholesky}}|$$
 
 ## 5. Mesh Convergence Study
 
-The same benchmark protocol is run at three mesh resolutions:
+The same benchmark protocol is run across three geometric discretisation levels:
 
-| Level  | Description      | Purpose                        |
-|--------|------------------|--------------------------------|
-| Coarse | Low DOF count    | Fast sweep, coarse temperature |
-| Medium | Moderate DOF     | Balance of speed and accuracy  |
-| Fine   | High DOF count   | Reference solution             |
+| Level  | Description      | Node Count | Element Count | Purpose                        |
+|--------|------------------|------------|---------------|--------------------------------|
+| Coarse | Fast screening   | ~590 DOFs  | ~1,745 tets   | Rapid sweep & baseline checks  |
+| Medium | Engineering bal. | ~1,944 DOFs| ~7,128 tets   | Optimal accuracy / speed trade |
+| Fine   | Reference mesh   | ~5,880 DOFs| ~23,808 tets  | Detailed gradient capture      |
 
-For each level, the following are recorded:
-- Node count, element count, DOF count
-- Max temperature (°C)
-- Solver convergence status (`cholesky_converged`, `cg_converged`, `gs_converged`)
-- Each solver's median total time, factorization time, setup time, iteration time, residual, and max ΔT vs reference
+### 5.1 Multi-Metric Convergence Evaluation
 
-### 5.1 Data-Driven Mesh & Solver Recommendation
+To avoid claiming mesh independence solely based on a single scalar value, UEW calculates four distinct relative metrics between successive mesh levels:
 
-Rather than using hardcoded speedup assertions, UEW computes actual runtime ratios directly from measured benchmark data:
-- Temperature shift between medium and fine grids: $\Delta T = |T_{\text{max, fine}} - T_{\text{max, med}}| / T_{\text{max, fine}} \times 100\%$
-- Measured Cholesky speedup: $S_{\text{chol}} = t_{\text{chol, fine}} / t_{\text{chol, med}}$
-- Measured CG speedup: $S_{\text{CG}} = t_{\text{CG, fine}} / t_{\text{CG, med}}$
-- Verification of convergence status for each solver across all three mesh resolutions.
+1. **Relative Maximum Temperature Change:**
+   $$\Delta T_{\max} = \frac{|T_{\max}^{(i)} - T_{\max}^{(i-1)}|}{T_{\max}^{(i)}} \times 100\%$$
+2. **Relative Average Temperature Change:**
+   $$\Delta T_{\text{avg}} = \frac{|T_{\text{avg}}^{(i)} - T_{\text{avg}}^{(i-1)}|}{T_{\text{avg}}^{(i)}} \times 100\%$$
+3. **Relative Thermal Resistance Change:**
+   $$\Delta R_{\text{th}} = \frac{|R_{\text{th}}^{(i)} - R_{\text{th}}^{(i-1)}|}{R_{\text{th}}^{(i)}} \times 100\%$$
+4. **Field-Level Relative $L_2$ Discrepancy:**
+   Evaluated over an independent spatial probe grid of 600 sample points distributed across the solid volume. Temperature is sampled via 4-node local Inverse Distance Weighting (IDW) interpolation from the enclosing mesh:
+   $$\varepsilon_{\text{field}} = \frac{\sqrt{\sum_{k=1}^{600} (T^{(i)}(\mathbf{p}_k) - T^{(i-1)}(\mathbf{p}_k))^2}}{\sqrt{\sum_{k=1}^{600} (T^{(i)}(\mathbf{p}_k))^2}} \times 100\%$$
 
-The recommendation dynamically evaluates whether the medium mesh satisfies engineering fidelity within 5% of the fine mesh while reporting the exact measured speedup factor.
+### 5.2 Distinct Convergence Classifications
+
+The engine strictly distinguishes:
+- **Solver Convergence:** Did the numerical solvers (Sparse LDLT and CG) converge to the specified tolerance on the discretized matrix at this mesh level? (Yes, verified at all 3 levels).
+- **Peak Temperature Convergence:** Has the maximum hot-spot temperature stabilized within engineering tolerance ($\Delta T_{\max} < 2.0\%$)?
+- **Field-Level Convergence:** Has the spatial distribution across the domain stabilized ($\varepsilon_{\text{field}} < 5.0\%$)?
+
+### 5.3 Asymptotic Limitation Notice
+
+While the 3 tested mesh levels demonstrate clear monotonic reduction in error, **3 mesh levels are insufficient to rigorously establish asymptotic Grid Convergence Index (GCI) extrapolation** or Richardson error bands without higher-order refinement. The engine transparently reports this limitation rather than fabricating mathematical claims.
+
+### 5.4 Data-Driven Timing Comparison
+
+Timing recommendations explicitly identify the metric being evaluated: **Median Total Solve Time**. The engine reports actual measured ratios (e.g. Medium mesh Sparse LDLT solve is 3.8x faster than Fine mesh) rather than arbitrary assertions.
 
 ---
 

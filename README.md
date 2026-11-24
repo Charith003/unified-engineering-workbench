@@ -48,10 +48,10 @@ Run the precompiled GoogleTest verification binary directly:
 ```
 
 ### Summary of Executed Tests:
-- **Total Tests:** 75 across all test suites
+- **Total Tests:** 82 across all test suites
 - **Legacy Suite (`uew_tests.exe`):** 45 passed / 0 failed (Backprop: 8, Hardware: 9, Performance: 6, Thermal 1D: 9, CSV: 6, STL: 7)
-- **3D Thermal & Solvers Suite (`test_all_phases.exe`):** 30 passed / 0 failed (Geometry: 8, Mesh: 6, Validator: 4, Thermal 3D: 3, Solvers: 7, Benchmark: 2)
-- **Overall Pass Rate:** 100% (75 / 75)
+- **3D Thermal & Solvers Suite (`test_all_phases.exe`):** 37 passed / 0 failed (Geometry: 8, Mesh: 6, Validator: 4, Thermal 3D: 3, Solvers & API: 13, Benchmark: 3)
+- **Overall Pass Rate:** 100% (82 / 82)
 
 ```powershell
 # Run the 3D Thermal FEM & Solvers test suite:

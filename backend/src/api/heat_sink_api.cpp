@@ -81,6 +81,162 @@ static thermal::ThermalBoundaryConditions parse_bcs(const json& j) {
     return bc;
 }
 
+json handle_thermal_solve_request(const json& body, int& http_status) {
+    auto params = parse_geometry_params(body);
+    auto mat = parse_material(body);
+    auto bc = parse_bcs(body);
+
+    mesh::MeshResolution res_preset = mesh::MeshResolution::Medium;
+    if (body.contains("resolution")) {
+        std::string r_str = body["resolution"].get<std::string>();
+        if (r_str == "coarse" || r_str == "Coarse") res_preset = mesh::MeshResolution::Coarse;
+        else if (r_str == "fine" || r_str == "Fine") res_preset = mesh::MeshResolution::Fine;
+    }
+
+    std::string solver_type = "cholesky";
+    if (body.contains("solver")) {
+        solver_type = body["solver"].get<std::string>();
+    }
+
+    geometry::HeatSinkGeometry geom(params);
+    mesh::MeshGenerator gen(geom);
+    mesh::MeshGenerationOptions opts;
+    opts.resolution = res_preset;
+    auto m = gen.generate(opts);
+    auto val_report = mesh::MeshValidator::validate(m);
+    if (!val_report.is_valid) {
+        http_status = 400;
+        return {{"success", false}, {"error", "Cannot perform thermal solve on invalid mesh: " + val_report.message}};
+    }
+
+    thermal::FEM3DSolver fem;
+    auto sys = fem.assemble(m, mat, bc);
+
+    std::unique_ptr<solvers::ISolver> solver;
+    if (solver_type == "cg" || solver_type == "conjugate_gradient") {
+        solver = std::make_unique<solvers::ConjugateGradientSolver>();
+    } else if (solver_type == "gauss_seidel" || solver_type == "gs") {
+        solver = std::make_unique<solvers::GaussSeidelSolver>();
+    } else {
+        solver = std::make_unique<solvers::CholeskySolver>(); // Sparse LDLT direct reference
+    }
+
+    solvers::SolverConfig scfg;
+    if (body.contains("tolerance")) scfg.tolerance = body["tolerance"].get<double>();
+    if (body.contains("max_iterations")) scfg.max_iterations = body["max_iterations"].get<size_t>();
+    if (body.contains("relaxation_omega")) scfg.relaxation_omega = body["relaxation_omega"].get<double>();
+
+    auto sres = solver->solve(sys.K, sys.F, scfg);
+
+    bool is_direct_ldlt = (sres.solver_name.find("LDLT") != std::string::npos || sres.solver_name.find("Cholesky") != std::string::npos);
+    bool solution_valid = sres.success &&
+                          (sres.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) &&
+                          sres.solution.allFinite();
+
+    // 1. THERMAL API FAILURE HANDLING:
+    // If solver fails or solution is invalid, return HTTP 422 with outer success: false and inner data.success: false.
+    // Preserve useful diagnostics (iterations, residual, assembly time, solve time, etc.).
+    // Withhold min/max/avg temperature, heat output, energy balance, and visual mesh contours.
+    if (!solution_valid) {
+        http_status = 422;
+        std::string diag_msg = sres.error_message.empty() 
+            ? "Numerical solver failed to reach specified convergence tolerance" 
+            : sres.error_message;
+        json data = {
+            {"success", false},
+            {"solver_name", sres.solver_name},
+            {"status_message", diag_msg},
+            {"assembly_time_ms", sys.assembly_time_ms},
+            {"factorization_time_ms", is_direct_ldlt ? sres.factorization_time_ms : -1.0},
+            {"setup_time_ms", !is_direct_ldlt ? sres.factorization_time_ms : -1.0},
+            {"solve_time_ms", sres.solve_time_ms},
+            {"total_time_ms", sres.total_time_ms},
+            {"iterations", sres.iterations},
+            {"residual_norm", sres.residual_norm},
+            {"memory_kb", sres.estimated_memory_bytes / 1024},
+            {"nodal_temperatures", json::array()},
+            {"nodes", json::array()},
+            {"boundary_faces", json::array()},
+            {"elements", json::array()}
+        };
+        return {
+            {"success", false},
+            {"error", diag_msg},
+            {"data", data}
+        };
+    }
+
+    // Only compute downstream metrics on genuine valid solutions
+    double q_out = thermal::FEM3DSolver::compute_total_heat_out(m, sres.solution, bc);
+    double t_min = sres.solution.minCoeff();
+    double t_max = sres.solution.maxCoeff();
+    double t_avg = sres.solution.mean();
+    double r_th = (t_max - bc.ambient_temperature_c) / std::max(0.001, sys.total_heat_in_w);
+    double energy_err = std::abs(sys.total_heat_in_w - q_out) / std::max(0.001, sys.total_heat_in_w) * 100.0;
+
+    std::vector<double> nodal_temps(sres.solution.size());
+    for (Eigen::Index i = 0; i < sres.solution.size(); ++i) {
+        nodal_temps[i] = sres.solution(i);
+    }
+
+    // Serialize nodes and boundary faces for 3D temperature visualization
+    json nodes_json = json::array();
+    for (const auto& n : m.nodes) {
+        nodes_json.push_back({{"id", n.id}, {"x", n.x}, {"y", n.y}, {"z", n.z}});
+    }
+
+    json faces_json = json::array();
+    for (const auto& f : m.boundary_faces) {
+        faces_json.push_back({
+            {"id", f.id},
+            {"nodes", {f.nodes[0], f.nodes[1], f.nodes[2]}},
+            {"boundary_type", mesh::to_string(f.boundary_type)},
+            {"area", f.area},
+            {"normal", {f.normal[0], f.normal[1], f.normal[2]}}
+        });
+    }
+
+    json elements_json = json::array();
+    for (const auto& el : m.elements) {
+        elements_json.push_back({
+            {"id", el.id},
+            {"nodes", {el.nodes[0], el.nodes[1], el.nodes[2], el.nodes[3]}},
+            {"quality", el.quality}
+        });
+    }
+
+    json data = {
+        {"success", true},
+        {"solver_name", sres.solver_name},
+        {"status_message", sres.error_message.empty() ? "Optimal Convergence" : sres.error_message},
+        {"min_temperature_c", t_min},
+        {"max_temperature_c", t_max},
+        {"avg_temperature_c", t_avg},
+        {"thermal_resistance_k_w", r_th},
+        {"total_heat_in_w", sys.total_heat_in_w},
+        {"total_heat_out_w", q_out},
+        {"energy_balance_error_percent", energy_err},
+        {"assembly_time_ms", sys.assembly_time_ms},
+        {"factorization_time_ms", is_direct_ldlt ? sres.factorization_time_ms : -1.0},
+        {"setup_time_ms", !is_direct_ldlt ? sres.factorization_time_ms : -1.0},
+        {"solve_time_ms", sres.solve_time_ms},
+        {"total_time_ms", sres.total_time_ms},
+        {"iterations", sres.iterations},
+        {"residual_norm", sres.residual_norm},
+        {"memory_kb", sres.estimated_memory_bytes / 1024},
+        {"nodal_temperatures", nodal_temps},
+        {"nodes", nodes_json},
+        {"boundary_faces", faces_json},
+        {"elements", elements_json}
+    };
+
+    http_status = 200;
+    return {
+        {"success", true},
+        {"data", data}
+    };
+}
+
 void register_heat_sink_routes(httplib::Server& svr) {
     // 1. POST /api/heat-sink/geometry/generate
     svr.Post("/api/heat-sink/geometry/generate", [](const httplib::Request& req, httplib::Response& res) {
@@ -192,147 +348,9 @@ void register_heat_sink_routes(httplib::Server& svr) {
     svr.Post("/api/heat-sink/thermal/solve", [](const httplib::Request& req, httplib::Response& res) {
         try {
             json body = req.body.empty() ? json::object() : json::parse(req.body);
-            auto params = parse_geometry_params(body);
-            auto mat = parse_material(body);
-            auto bc = parse_bcs(body);
-
-            mesh::MeshResolution res_preset = mesh::MeshResolution::Medium;
-            if (body.contains("resolution")) {
-                std::string r_str = body["resolution"].get<std::string>();
-                if (r_str == "coarse" || r_str == "Coarse") res_preset = mesh::MeshResolution::Coarse;
-                else if (r_str == "fine" || r_str == "Fine") res_preset = mesh::MeshResolution::Fine;
-            }
-
-            std::string solver_type = "cholesky";
-            if (body.contains("solver")) {
-                solver_type = body["solver"].get<std::string>();
-            }
-
-            geometry::HeatSinkGeometry geom(params);
-            mesh::MeshGenerator gen(geom);
-            mesh::MeshGenerationOptions opts;
-            opts.resolution = res_preset;
-            auto m = gen.generate(opts);
-            auto val_report = mesh::MeshValidator::validate(m);
-            if (!val_report.is_valid) {
-                json_response(req, res, {{"success", false}, {"error", "Cannot perform thermal solve on invalid mesh: " + val_report.message}}, 400);
-                return;
-            }
-
-            thermal::FEM3DSolver fem;
-            auto sys = fem.assemble(m, mat, bc);
-
-            std::unique_ptr<solvers::ISolver> solver;
-            if (solver_type == "cg" || solver_type == "conjugate_gradient") {
-                solver = std::make_unique<solvers::ConjugateGradientSolver>();
-            } else if (solver_type == "gauss_seidel" || solver_type == "gs") {
-                solver = std::make_unique<solvers::GaussSeidelSolver>();
-            } else {
-                solver = std::make_unique<solvers::CholeskySolver>();
-            }
-
-            solvers::SolverConfig scfg;
-            if (body.contains("tolerance")) scfg.tolerance = body["tolerance"].get<double>();
-            if (body.contains("max_iterations")) scfg.max_iterations = body["max_iterations"].get<size_t>();
-            if (body.contains("relaxation_omega")) scfg.relaxation_omega = body["relaxation_omega"].get<double>();
-
-            auto sres = solver->solve(sys.K, sys.F, scfg);
-
-            bool is_cholesky = (sres.solver_name.find("Cholesky") != std::string::npos);
-            bool solution_valid = sres.success &&
-                                  (sres.solution.size() == static_cast<Eigen::Index>(sys.dof_count)) &&
-                                  sres.solution.allFinite();
-
-            // 1. THERMAL API FAILURE HANDLING:
-            // If the solver fails, return a structured failure response.
-            // Do not calculate min/max/average temperature, heat output, energy balance or visualization data from an invalid solution.
-            if (!solution_valid) {
-                json data = {
-                    {"success", false},
-                    {"solver_name", sres.solver_name},
-                    {"status_message", sres.error_message.empty() ? "Solver failed to reach specified convergence tolerance" : sres.error_message},
-                    {"assembly_time_ms", sys.assembly_time_ms},
-                    {"factorization_time_ms", is_cholesky ? sres.factorization_time_ms : -1.0},
-                    {"setup_time_ms", !is_cholesky ? sres.factorization_time_ms : -1.0},
-                    {"solve_time_ms", sres.solve_time_ms},
-                    {"total_time_ms", sres.total_time_ms},
-                    {"iterations", sres.iterations},
-                    {"residual_norm", sres.residual_norm},
-                    {"memory_kb", sres.estimated_memory_bytes / 1024},
-                    {"nodal_temperatures", json::array()},
-                    {"nodes", json::array()},
-                    {"boundary_faces", json::array()},
-                    {"elements", json::array()}
-                };
-                json_response(req, res, {{"success", true}, {"data", data}});
-                return;
-            }
-
-            // Only compute downstream metrics on genuine valid solutions
-            double q_out = thermal::FEM3DSolver::compute_total_heat_out(m, sres.solution, bc);
-            double t_min = sres.solution.minCoeff();
-            double t_max = sres.solution.maxCoeff();
-            double t_avg = sres.solution.mean();
-            double r_th = (t_max - bc.ambient_temperature_c) / std::max(0.001, sys.total_heat_in_w);
-            double energy_err = std::abs(sys.total_heat_in_w - q_out) / std::max(0.001, sys.total_heat_in_w) * 100.0;
-
-            std::vector<double> nodal_temps(sres.solution.size());
-            for (Eigen::Index i = 0; i < sres.solution.size(); ++i) {
-                nodal_temps[i] = sres.solution(i);
-            }
-
-            // Serialize nodes and boundary faces for 3D temperature visualization
-            json nodes_json = json::array();
-            for (const auto& n : m.nodes) {
-                nodes_json.push_back({{"id", n.id}, {"x", n.x}, {"y", n.y}, {"z", n.z}});
-            }
-
-            json faces_json = json::array();
-            for (const auto& f : m.boundary_faces) {
-                faces_json.push_back({
-                    {"id", f.id},
-                    {"nodes", {f.nodes[0], f.nodes[1], f.nodes[2]}},
-                    {"boundary_type", mesh::to_string(f.boundary_type)},
-                    {"area", f.area},
-                    {"normal", {f.normal[0], f.normal[1], f.normal[2]}}
-                });
-            }
-
-            json elements_json = json::array();
-            for (const auto& el : m.elements) {
-                elements_json.push_back({
-                    {"id", el.id},
-                    {"nodes", {el.nodes[0], el.nodes[1], el.nodes[2], el.nodes[3]}},
-                    {"quality", el.quality}
-                });
-            }
-
-            json data = {
-                {"success", true},
-                {"solver_name", sres.solver_name},
-                {"status_message", sres.error_message.empty() ? "Optimal Convergence" : sres.error_message},
-                {"min_temperature_c", t_min},
-                {"max_temperature_c", t_max},
-                {"avg_temperature_c", t_avg},
-                {"thermal_resistance_k_w", r_th},
-                {"total_heat_in_w", sys.total_heat_in_w},
-                {"total_heat_out_w", q_out},
-                {"energy_balance_error_percent", energy_err},
-                {"assembly_time_ms", sys.assembly_time_ms},
-                {"factorization_time_ms", is_cholesky ? sres.factorization_time_ms : -1.0},
-                {"setup_time_ms", !is_cholesky ? sres.factorization_time_ms : -1.0},
-                {"solve_time_ms", sres.solve_time_ms},
-                {"total_time_ms", sres.total_time_ms},
-                {"iterations", sres.iterations},
-                {"residual_norm", sres.residual_norm},
-                {"memory_kb", sres.estimated_memory_bytes / 1024},
-                {"nodal_temperatures", nodal_temps},
-                {"nodes", nodes_json},
-                {"boundary_faces", faces_json},
-                {"elements", elements_json}
-            };
-
-            json_response(req, res, {{"success", true}, {"data", data}});
+            int status = 200;
+            json resp = handle_thermal_solve_request(body, status);
+            json_response(req, res, resp, status);
         } catch (const std::exception& e) {
             json_response(req, res, {{"success", false}, {"error", e.what()}}, 400);
         }
@@ -436,6 +454,10 @@ void register_heat_sink_routes(httplib::Server& svr) {
                     {"avg_temperature_c", pt.avg_temperature_c},
                     {"thermal_resistance_k_w", pt.thermal_resistance_k_w},
                     {"relative_change_percent", pt.relative_change_percent},
+                    {"rel_max_temp_change_percent", pt.rel_max_temp_change_percent},
+                    {"rel_avg_temp_change_percent", pt.rel_avg_temp_change_percent},
+                    {"rel_thermal_resistance_change_percent", pt.rel_thermal_resistance_change_percent},
+                    {"rel_field_l2_difference_percent", pt.rel_field_l2_difference_percent},
                     {"assembly_time_ms", pt.assembly_time_ms},
                     {"cholesky_time_ms", pt.cholesky_time_ms},
                     {"cg_time_ms", pt.cg_time_ms},
@@ -448,13 +470,15 @@ void register_heat_sink_routes(httplib::Server& svr) {
 
             json data = {
                 {"is_converged", cr.is_converged},
+                {"max_temp_converged", cr.max_temp_converged},
+                {"field_converged", cr.field_converged},
+                {"solver_converged", cr.solver_converged},
                 {"asymptotic_estimate_c", cr.asymptotic_estimate_c},
                 {"recommendation", cr.recommendation},
                 {"points", points_json}
             };
 
-            json_response(req, res, {{"success", true}, {"data", data}});
-
+            // Exactly one JSON response call per request
             json_response(req, res, {{"success", true}, {"data", data}});
         } catch (const std::exception& e) {
             json_response(req, res, {{"success", false}, {"error", e.what()}}, 400);

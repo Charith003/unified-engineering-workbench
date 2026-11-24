@@ -88,8 +88,16 @@ export default function HeatSinkPage() {
         solver: config.solver,
         ...bcPayload()
       });
-      if (r.success) { setThermalResult(r.data as HeatSinkThermalResult); setActiveTab('thermal'); }
-      else setError((r as any).error ?? 'Thermal solve failed');
+      if (r.success) {
+        setThermalResult(r.data as HeatSinkThermalResult);
+        setActiveTab('thermal');
+      } else {
+        if (r.data) {
+          setThermalResult(r.data as HeatSinkThermalResult);
+          setActiveTab('thermal');
+        }
+        setError((r as any).error ?? 'Thermal solve failed');
+      }
     } catch (e: any) { setError(e.message ?? 'Network error'); }
     setLoading(false);
   }
@@ -132,7 +140,7 @@ export default function HeatSinkPage() {
         <h1 className="page-title">3D Thermal FEM — Heat Sink Simulation</h1>
         <p className="page-subtitle">
           Asymmetric electronic heat sink: parametric geometry → tetrahedral mesh → 3D FEM assembly →
-          Cholesky / CG / Gauss-Seidel solver comparison
+          Sparse LDLT / CG / Gauss-Seidel solver comparison
         </p>
       </div>
 
@@ -153,9 +161,9 @@ export default function HeatSinkPage() {
             <label className="form-label">Solver (Single Run)</label>
             <select className="form-input" value={config.solver}
               onChange={e => setConfig(c => ({ ...c, solver: e.target.value as SolverType }))}>
-              <option value="cholesky">Sparse Cholesky (Direct)</option>
+              <option value="cholesky">Sparse LDLT (Direct Reference)</option>
               <option value="cg">Conjugate Gradient (CG)</option>
-              <option value="gauss_seidel">Gauss-Seidel (Iterative)</option>
+              <option value="gauss_seidel">Symmetric Gauss-Seidel (SSOR)</option>
             </select>
           </div>
           <div className="form-group">
@@ -972,7 +980,7 @@ function ThermalTab({
               <tr><td>Iterations Completed</td><td>{result.iterations}</td></tr>
               <tr><td>Final Residual Norm ‖r‖/‖b‖</td><td>{result.residual_norm.toExponential(3)}</td></tr>
               <tr><td>Assembly Time</td><td>{result.assembly_time_ms.toFixed(1)} ms</td></tr>
-              <tr><td>Cholesky Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Sparse LDLT Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
               <tr><td>Preconditioner / Setup Time</td><td>{result.setup_time_ms !== undefined && result.setup_time_ms >= 0 ? `${result.setup_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
               <tr><td>Iteration / Solve Time</td><td>{result.solve_time_ms.toFixed(1)} ms</td></tr>
               <tr><td>Total Time</td><td>{result.total_time_ms.toFixed(1)} ms</td></tr>
@@ -1047,7 +1055,7 @@ function ThermalTab({
               <tr><td>Iterations</td><td>{result.iterations}</td></tr>
               <tr><td>Residual Norm ‖r‖/‖b‖</td><td>{result.residual_norm.toExponential(3)}</td></tr>
               <tr><td>Assembly Time</td><td>{result.assembly_time_ms.toFixed(1)} ms</td></tr>
-              <tr><td>Cholesky Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
+              <tr><td>Sparse LDLT Factorization Time</td><td>{result.factorization_time_ms >= 0 ? `${result.factorization_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
               <tr><td>Preconditioner / Setup Time</td><td>{result.setup_time_ms !== undefined && result.setup_time_ms >= 0 ? `${result.setup_time_ms.toFixed(2)} ms` : 'N/A'}</td></tr>
               <tr><td>Iteration / Solve Time</td><td>{result.solve_time_ms.toFixed(1)} ms</td></tr>
               <tr><td>Total Time</td><td>{result.total_time_ms.toFixed(1)} ms</td></tr>
@@ -1154,10 +1162,10 @@ function BenchmarkTab({ result }: { result: HeatSinkBenchmarkResult | null }) {
               <th>Iterations</th>
               <th>Residual ‖r‖/‖b‖</th>
               <th>Median Total (ms)</th>
-              <th>Cholesky Factorization (ms)</th>
+              <th>Sparse LDLT Factorization (ms)</th>
               <th>Setup / Precond (ms)</th>
               <th>Solve / Iteration (ms)</th>
-              <th>Speedup vs Cholesky</th>
+              <th>Speedup vs Sparse LDLT Ref</th>
               <th>Max ΔT vs Ref (°C)</th>
               <th>Memory (KB)</th>
             </tr>
@@ -1260,7 +1268,20 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
             border: `1px solid ${result.is_converged ? '#B7F34A' : '#F4A261'}66`,
             padding: 12, borderRadius: 8, marginBottom: 12
           }}>
-            <strong>{result.is_converged ? '✓ Converged' : '⚠ Not fully converged'}</strong>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong>{result.is_converged ? '✓ Asymptotically Converged' : '⚠ Refinement Progression Documented'}</strong>
+              <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
+                <span style={{ padding: '2px 6px', borderRadius: 4, background: result.solver_converged ? '#4ADE8033' : '#F8717133', color: result.solver_converged ? '#4ADE80' : '#F87171' }}>
+                  Solvers: {result.solver_converged ? '✓' : '✗'}
+                </span>
+                <span style={{ padding: '2px 6px', borderRadius: 4, background: result.max_temp_converged ? '#4ADE8033' : '#F8717133', color: result.max_temp_converged ? '#4ADE80' : '#F87171' }}>
+                  Peak T: {result.max_temp_converged ? '✓ <2%' : '✗'}
+                </span>
+                <span style={{ padding: '2px 6px', borderRadius: 4, background: result.field_converged ? '#4ADE8033' : '#F8717133', color: result.field_converged ? '#4ADE80' : '#F87171' }}>
+                  Field L2: {result.field_converged ? '✓ <5%' : '✗'}
+                </span>
+              </div>
+            </div>
             {result.asymptotic_estimate_c > 0 && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
                 Asymptotic T_max estimate: <strong>{result.asymptotic_estimate_c.toFixed(2)} °C</strong>
@@ -1279,8 +1300,10 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
                 <th>Nodes</th>
                 <th>Tets</th>
                 <th>T_max (°C)</th>
-                <th>Δ (%)</th>
-                <th>Cholesky</th>
+                <th>Δ T_max (%)</th>
+                <th>Δ T_avg (%)</th>
+                <th>Field L2 (%)</th>
+                <th>Sparse LDLT</th>
                 <th>CG</th>
                 <th>SSOR</th>
               </tr>
@@ -1292,9 +1315,11 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
                   <td>{pt.node_count.toLocaleString()}</td>
                   <td>{pt.element_count.toLocaleString()}</td>
                   <td>{pt.max_temperature_c.toFixed(2)}</td>
-                  <td><span style={{ color: pt.relative_change_percent < 2 ? '#4ADE80' : '#F87171' }}>
-                    {pt.relative_change_percent.toFixed(2)}%
+                  <td><span style={{ color: (pt.rel_max_temp_change_percent ?? pt.relative_change_percent) < 2 ? '#4ADE80' : '#F87171' }}>
+                    {(pt.rel_max_temp_change_percent ?? pt.relative_change_percent).toFixed(2)}%
                   </span></td>
+                  <td>{pt.rel_avg_temp_change_percent !== undefined ? `${pt.rel_avg_temp_change_percent.toFixed(2)}%` : '—'}</td>
+                  <td>{pt.rel_field_l2_difference_percent !== undefined ? `${pt.rel_field_l2_difference_percent.toFixed(2)}%` : '—'}</td>
                   <td><span style={{ color: pt.cholesky_converged !== false ? '#4ADE80' : '#F87171' }}>
                     {pt.cholesky_converged !== false ? '✓' : '✗'}
                   </span></td>
@@ -1339,7 +1364,7 @@ function ConvergenceTab({ result }: { result: HeatSinkConvergenceResult | null }
           <Plot
             data={[
               {
-                type: 'bar' as const, name: 'Cholesky',
+                type: 'bar' as const, name: 'Sparse LDLT',
                 x: pts.map(p => p.resolution_name), y: pts.map(p => p.cholesky_time_ms),
                 marker: { color: '#B7F34A' }
               },

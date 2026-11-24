@@ -38,7 +38,10 @@ struct SolverBenchmarkMetrics {
     double speedup_vs_reference{1.0}; // T_ref / T_solver
 
     size_t memory_kb{0};
+    size_t successful_trials{0};
+    size_t total_trials{0};
     std::vector<double> trial_times_ms;
+    std::vector<double> trial_residuals;
 };
 
 /**
@@ -59,7 +62,7 @@ struct FullBenchmarkReport {
     double thermal_resistance_k_w{0.0};
 
     std::vector<SolverBenchmarkMetrics> solvers;
-    std::vector<double> reference_solution; // Cholesky solution vector
+    std::vector<double> reference_solution; // Sparse LDLT direct reference solution vector
 };
 
 /**
@@ -73,7 +76,14 @@ struct MeshConvergencePoint {
     double min_temperature_c{0.0};
     double avg_temperature_c{0.0};
     double thermal_resistance_k_w{0.0};
-    double relative_change_percent{0.0}; // Relative to previous resolution
+
+    // Rigorous multi-metric relative changes vs previous mesh resolution level (%)
+    double relative_change_percent{0.0}; // Retained for backwards compatibility (rel max temp change)
+    double rel_max_temp_change_percent{0.0};
+    double rel_avg_temp_change_percent{0.0};
+    double rel_thermal_resistance_change_percent{0.0};
+    double rel_field_l2_difference_percent{0.0}; // Spatial L2 discrepancy sampled on fixed domain probe grid
+
     double assembly_time_ms{0.0};
     double cholesky_time_ms{0.0};
     double cg_time_ms{0.0};
@@ -88,7 +98,10 @@ struct MeshConvergencePoint {
  */
 struct MeshConvergenceReport {
     std::vector<MeshConvergencePoint> points;
-    bool is_converged{false};
+    bool is_converged{false};             // Overall convergence flag
+    bool max_temp_converged{false};       // Peak temperature convergence criterion (rel change < 2%)
+    bool field_converged{false};          // Field-level L2 convergence criterion (rel field diff < 5%)
+    bool solver_converged{false};         // Numerical solver convergence at all levels
     double asymptotic_estimate_c{0.0};
     std::string recommendation;
 };

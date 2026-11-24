@@ -2,10 +2,10 @@
 
 **Module:** Quality Assurance & Verification  
 **Test Harness:** GoogleTest (gtest)  
-**Binary:** `uew_tests.exe`  
-**Total Executed Tests:** 45  
-**Passed Tests:** 45  
-**Failed Tests:** 0
+**Binaries:** `uew_tests.exe` (Legacy 45 tests) + `test_all_phases.exe` (3D FEM & Solvers 37 tests)  
+**Total Executed Tests:** 82  
+**Passed Tests:** 82  
+**Failed Tests:** 0 (100% Pass Rate)
 
 ---
 
@@ -188,3 +188,110 @@ Running main() from build/_deps/googletest-src/googletest/src/gtest_main.cc
 [==========] 45 tests from 6 test suites ran. (449 ms total)
 [  PASSED  ] 45 tests.
 ```
+
+---
+
+## 3. 3D Thermal FEM, Solvers & API Verification (`test_all_phases.exe`)
+
+```
+Running main() from build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 37 tests from 6 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from SolverBenchmark
+[ RUN      ] SolverBenchmark.FullBenchmarkRun
+[       OK ] SolverBenchmark.FullBenchmarkRun
+[ RUN      ] SolverBenchmark.MeshConvergenceStudy
+[       OK ] SolverBenchmark.MeshConvergenceStudy
+[ RUN      ] SolverBenchmark.AllBenchmarkTrialsValidationAndResidualAudit
+[       OK ] SolverBenchmark.AllBenchmarkTrialsValidationAndResidualAudit
+[----------] 3 tests from SolverBenchmark
+
+[----------] 13 tests from NumericalSolversTest
+[ RUN      ] NumericalSolversTest.CholeskySolverExactConvergence
+[       OK ] NumericalSolversTest.CholeskySolverExactConvergence
+[ RUN      ] NumericalSolversTest.ConjugateGradientConvergence
+[       OK ] NumericalSolversTest.ConjugateGradientConvergence
+[ RUN      ] NumericalSolversTest.GaussSeidelConvergenceOnDiagonallyDominantSystem
+[       OK ] NumericalSolversTest.GaussSeidelConvergenceOnDiagonallyDominantSystem
+[ RUN      ] NumericalSolversTest.GaussSeidelNonConvergedDetection
+[       OK ] NumericalSolversTest.GaussSeidelNonConvergedDetection
+[ RUN      ] NumericalSolversTest.GaussSeidelDivergentSystemDetection
+[       OK ] NumericalSolversTest.GaussSeidelDivergentSystemDetection
+[ RUN      ] NumericalSolversTest.SolversAgreementOnIdenticalSystem
+[       OK ] NumericalSolversTest.SolversAgreementOnIdenticalSystem
+[ RUN      ] NumericalSolversTest.ThermalAPIFailureHandlingOnNonConvergentSolver
+[       OK ] NumericalSolversTest.ThermalAPIFailureHandlingOnNonConvergentSolver
+[ RUN      ] NumericalSolversTest.DirectSolverNamingAndImplementationConsistency
+[       OK ] NumericalSolversTest.DirectSolverNamingAndImplementationConsistency
+[ RUN      ] NumericalSolversTest.NonFiniteSolutionRejection
+[       OK ] NumericalSolversTest.NonFiniteSolutionRejection
+[ RUN      ] NumericalSolversTest.IncorrectSolutionDimensionRejection
+[       OK ] NumericalSolversTest.IncorrectSolutionDimensionRejection
+[ RUN      ] NumericalSolversTest.SolverResidualVerificationAgainstOriginalSystem
+[       OK ] NumericalSolversTest.SolverResidualVerificationAgainstOriginalSystem
+[ RUN      ] NumericalSolversTest.ThermalAPIFailureSemanticsIntegration
+[       OK ] NumericalSolversTest.ThermalAPIFailureSemanticsIntegration
+[ RUN      ] NumericalSolversTest.ThermalAPISuccessSemanticsIntegration
+[       OK ] NumericalSolversTest.ThermalAPISuccessSemanticsIntegration
+[----------] 13 tests from NumericalSolversTest
+
+[----------] 3 tests from FEM3D
+[ RUN      ] FEM3D.AssemblyProducesSymmetricPositiveDefinite
+[       OK ] FEM3D.AssemblyProducesSymmetricPositiveDefinite
+[ RUN      ] FEM3D.ConservationOfEnergy
+[       OK ] FEM3D.ConservationOfEnergy
+[ RUN      ] FEM3D.ManufacturedLinearSolutionPatchTest
+[       OK ] FEM3D.ManufacturedLinearSolutionPatchTest
+[----------] 3 tests from FEM3D
+
+[----------] 6 tests from MeshGenerator
+[ RUN      ] MeshGenerator.CoarseMeshGeneration
+[       OK ] MeshGenerator.CoarseMeshGeneration
+[ RUN      ] MeshGenerator.MediumMeshGeneration
+[       OK ] MeshGenerator.MediumMeshGeneration
+[ RUN      ] MeshGenerator.MeshMonotonicity
+[       OK ] MeshGenerator.MeshMonotonicity
+[ RUN      ] MeshGenerator.BoundaryConditionTagging
+[       OK ] MeshGenerator.BoundaryConditionTagging
+[ RUN      ] MeshGenerator.HeatSourceTopSurfaceLocationAndArea
+[       OK ] MeshGenerator.HeatSourceTopSurfaceLocationAndArea
+[ RUN      ] MeshGenerator.BottomFaceHasConvection
+[       OK ] MeshGenerator.BottomFaceHasConvection
+[----------] 6 tests from MeshGenerator
+
+[----------] 4 tests from MeshValidator
+[ RUN      ] MeshValidator.DetectsCorruptedMesh
+[       OK ] MeshValidator.DetectsCorruptedMesh
+[ RUN      ] MeshValidator.DetectsOutOfRangeNodeIndex
+[       OK ] MeshValidator.DetectsOutOfRangeNodeIndex
+[ RUN      ] MeshValidator.DetectsNonFiniteCoordinates
+[       OK ] MeshValidator.DetectsNonFiniteCoordinates
+[ RUN      ] MeshValidator.DetectsDegenerateDuplicateNodesInTet
+[       OK ] MeshValidator.DetectsDegenerateDuplicateNodesInTet
+[----------] 4 tests from MeshValidator
+
+[----------] 8 tests from HeatSinkGeometry
+[ RUN      ] HeatSinkGeometry.DefaultParamsValid
+[       OK ] HeatSinkGeometry.DefaultParamsValid
+[ RUN      ] HeatSinkGeometry.RejectsNegativeBaseDimensions
+[       OK ] HeatSinkGeometry.RejectsNegativeBaseDimensions
+[ RUN      ] HeatSinkGeometry.RejectsOverlappingFins
+[       OK ] HeatSinkGeometry.RejectsOverlappingFins
+[ RUN      ] HeatSinkGeometry.RejectsHeatSourceOutOfBounds
+[       OK ] HeatSinkGeometry.RejectsHeatSourceOutOfBounds
+[ RUN      ] HeatSinkGeometry.MountingHolesDetection
+[       OK ] HeatSinkGeometry.MountingHolesDetection
+[ RUN      ] HeatSinkGeometry.HeatSourceFootprintDetection
+[       OK ] HeatSinkGeometry.HeatSourceFootprintDetection
+[ RUN      ] HeatSinkGeometry.GeneratesValidAsciiSTL
+[       OK ] HeatSinkGeometry.GeneratesValidAsciiSTL
+[ RUN      ] HeatSinkGeometry.VolumeConsistencyWithPhysicalDimensions
+[       OK ] HeatSinkGeometry.VolumeConsistencyWithPhysicalDimensions
+[----------] 8 tests from HeatSinkGeometry
+
+[----------] Global test environment tear-down
+[==========] 37 tests from 6 test suites ran.
+[  PASSED  ] 37 tests.
+```
+
+**Grand Total: 82 / 82 tests PASSED (100% success rate across all 12 test suites).**

@@ -126,17 +126,26 @@ export async function solveHeatSinkThermal(payload: {
   max_iterations?: number;
   relaxation_omega?: number;
 }): Promise<ApiResponse<HeatSinkThermalResult>> {
-  const r = await http.post<ApiResponse<HeatSinkThermalResult>>('/api/heat-sink/thermal/solve', {
-    ...(payload.params ?? {}),
-    resolution: payload.resolution,
-    solver: payload.solver,
-    material: payload.material,
-    boundary_conditions: payload.boundary_conditions,
-    tolerance: payload.tolerance,
-    max_iterations: payload.max_iterations,
-    relaxation_omega: payload.relaxation_omega
-  });
-  return r.data;
+  try {
+    const r = await http.post<ApiResponse<HeatSinkThermalResult>>('/api/heat-sink/thermal/solve', {
+      ...(payload.params ?? {}),
+      resolution: payload.resolution,
+      solver: payload.solver,
+      material: payload.material,
+      boundary_conditions: payload.boundary_conditions,
+      tolerance: payload.tolerance,
+      max_iterations: payload.max_iterations,
+      relaxation_omega: payload.relaxation_omega
+    }, {
+      validateStatus: (status) => status < 500
+    });
+    return r.data;
+  } catch (err: any) {
+    if (err.response?.data) {
+      return err.response.data;
+    }
+    throw err;
+  }
 }
 
 export async function runHeatSinkBenchmark(payload: {

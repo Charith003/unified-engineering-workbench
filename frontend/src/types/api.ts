@@ -249,7 +249,10 @@ export interface SolverMetric {
   median_solve_time_ms: number;
   speedup_vs_reference: number;
   memory_kb: number;
+  successful_trials?: number;
+  total_trials?: number;
   trial_times_ms: number[];
+  trial_residuals?: number[];
 }
 
 export interface HeatSinkBenchmarkResult {
@@ -277,6 +280,10 @@ export interface ConvergencePoint {
   avg_temperature_c: number;
   thermal_resistance_k_w: number;
   relative_change_percent: number;
+  rel_max_temp_change_percent?: number;
+  rel_avg_temp_change_percent?: number;
+  rel_thermal_resistance_change_percent?: number;
+  rel_field_l2_difference_percent?: number;
   assembly_time_ms: number;
   cholesky_time_ms: number;
   cg_time_ms: number;
@@ -288,6 +295,9 @@ export interface ConvergencePoint {
 
 export interface HeatSinkConvergenceResult {
   is_converged: boolean;
+  max_temp_converged?: boolean;
+  field_converged?: boolean;
+  solver_converged?: boolean;
   asymptotic_estimate_c: number;
   recommendation: string;
   points: ConvergencePoint[];
