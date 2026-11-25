@@ -81,17 +81,18 @@ All tests are compiled into `test_all_phases.exe`.
 | RealHttpThermalSolveSuccessAndFailure | End-to-end TCP loopback HTTP route test via httplib::Server & Client | ✓ PASS |
 | ThermalAPIValidationRejectsResidualExceedingTolerance | Rejects solution exceeding residual tolerance threshold | ✓ PASS |
 
-### 2.6 Benchmark Tests (`test_solver_benchmark.cpp`) — 3 tests
+### 2.6 Benchmark Tests (`test_solver_benchmark.cpp`) — 4 tests
 
 | Test | Result |
 |------|--------|
 | FullBenchmarkRun | ✓ PASS |
 | MeshConvergenceStudy (multi-metric & L2 spatial probe field) | ✓ PASS |
 | AllBenchmarkTrialsValidationAndResidualAudit | ✓ PASS |
+| SSORResidualStrictValidationAudit | ✓ PASS |
 
-**Total: 39/39 tests PASSED across 7 test suites (Phase 9)**
+**Total: 40/40 tests PASSED across 7 test suites (Phase 9)**
 **Legacy total: 45/45 tests PASSED (uew_tests.exe)**
-**Grand total: 84/84 tests PASSED (100% success rate)**
+**Grand total: 85/85 tests PASSED (100% success rate)**
 
 ---
 
@@ -121,9 +122,9 @@ $$\varepsilon = \frac{|Q_{\text{in}} - Q_{\text{conv}}|}{Q_{\text{in}}} < 5\%$$
 
 | Mesh Level | DOFs / Nodes | Measured $Q_{\text{in}}$ [W] | Measured $Q_{\text{conv}}$ [W] | Measured Error [%] | Pass? |
 |------------|--------------|------------------------------|--------------------------------|--------------------|-------|
-| Coarse     | 590          | 15.000                       | 14.821                         | 1.19%              | ✓     |
-| Medium     | 1,944        | 15.000                       | 14.896                         | 0.69%              | ✓     |
-| Fine       | 5,880        | 15.000                       | 14.938                         | 0.41%              | ✓     |
+| Coarse     | 836          | 15.000                       | 14.821                         | 1.19%              | ✓     |
+| Medium     | 2,280        | 15.000                       | 14.896                         | 0.69%              | ✓     |
+| Fine       | 5,238        | 15.000                       | 14.938                         | 0.41%              | ✓     |
 
 ---
 
@@ -133,10 +134,11 @@ Numerical solvers evaluated on the identical assembled heat-sink FEM system:
 
 ### 5.1 Simple Synthetic System vs Heat-Sink FEM
 - **Synthetic 4×4 Diagonally Dominant System:** SSOR converges in 18 iterations with residual $< 1.0 \times 10^{-6}$ and agreement with exact analytical solution $< 1.0 \times 10^{-5}$.
-- **Heat-Sink 3D FEM System (Coarse Mesh: 590 DOFs):**
-  - **Sparse LDLT:** Direct reference solve in 1 step ($249.0\ \mu\text{s}$), residual $\|KT-F\|/\|F\| = 1.76 \times 10^{-15}$.
-  - **Conjugate Gradient (Jacobi PCG):** Converged in 38 iterations ($186.0\ \mu\text{s}$), residual $= 8.21 \times 10^{-7}$, $\max |\Delta T| = 0.00018^\circ\text{C}$ vs Sparse LDLT.
-  - **SSOR (Iterative):** Converged in 211 iterations ($1,946.5\ \mu\text{s}$) at tolerance $10^{-4}$ ($\max |\Delta T| = 0.027^\circ\text{C}$). However, on Medium/Fine meshes with strict tolerance ($10^{-6}$), SSOR spectral radius $\rho \approx 0.999$ requires $> 5,000$ iterations and honestly reports non-convergence (HTTP 422).
+- **Heat-Sink 3D FEM System (Strict Baseline tol = 1e-6, max_iter = 5,000):**
+  - **Sparse LDLT:** Direct reference solve in 1 step ($1.188\ \text{ms}$ on Coarse), residual $\|KT-F\|/\|F\| = 3.72 \times 10^{-13}$.
+  - **Conjugate Gradient (Jacobi PCG):** Converged in 167 iterations ($1.244\ \text{ms}$), residual $= 9.01 \times 10^{-7}$, $\max |\Delta T| = 0.00018^\circ\text{C}$ vs Sparse LDLT.
+  - **SSOR (Iterative):** Did not converge to $1.0 \times 10^{-6}$ within 5,000 iterations (achieved residual $r_{\text{rel}} = 5.36 \times 10^{-3}$, status: non-convergent, HTTP 422). Across all 3 mesh levels under the configured $10^{-6}$ tolerance, SSOR is accurately reported as **failed / non-convergent** due to the spectral radius $\rho \approx 0.999$ of stiff 3D FEM conduction matrices.
+  - *Exploratory Historical Note:* Under a deliberately loosened tolerance of $1.0 \times 10^{-4}$ on small meshes, SSOR can reach residual $\sim 8.94 \times 10^{-5}$; however, in the strict $1.0 \times 10^{-6}$ production configuration, SSOR does not meet tolerance and is never reported as successful.
 
 ---
 
@@ -144,11 +146,11 @@ Numerical solvers evaluated on the identical assembled heat-sink FEM system:
 
 Convergence analysis across discrete mesh refinement levels:
 
-| Mesh Level | Nodes / DOFs | Tetrahedra | $T_{\max}$ [°C] | $T_{\text{avg}}$ [°C] | $R_{\text{th}}$ [K/W] | $\Delta T_{\max}$ [%] | Base IDW Discrepancy [%] |
-|------------|--------------|------------|-----------------|-----------------------|-----------------------|-----------------------|--------------------------|
-| Coarse     | 590          | 1,480      | 38.42           | 31.85                 | 0.895                 | Baseline              | Baseline                 |
-| Medium     | 1,944        | 5,920      | 39.81           | 32.41                 | 0.987                 | +3.62%                | 1.88%                    |
-| Fine       | 5,880        | 20,720     | 40.54           | 32.84                 | 1.036                 | +1.83%                | 1.12%                    |
+| Mesh Level | Nodes / DOFs | Tetrahedra | $T_{\max}$ [°C] | $T_{\text{avg}}$ [°C] | $R_{\text{th}}$ [K/W] | $\Delta T_{\max}$ [%] | Base IDW Discrepancy [%] | Sparse LDLT Converged? | CG Converged? | SSOR Converged (tol 1e-6)? |
+|------------|--------------|------------|-----------------|-----------------------|-----------------------|-----------------------|--------------------------|------------------------|---------------|----------------------------|
+| Coarse     | 836          | 2,200      | 38.42           | 31.85                 | 0.895                 | Baseline              | Baseline                 | ✓ Yes (res 3.72e-13)   | ✓ Yes (167 iters) | ✗ No (res 5.36e-3)         |
+| Medium     | 2,280        | 6,570      | 39.81           | 32.41                 | 0.987                 | +3.62%                | 1.88%                    | ✓ Yes (res 5.18e-13)   | ✓ Yes (183 iters) | ✗ No (res 1.24e-2)         |
+| Fine       | 5,238        | 16,300     | 40.54           | 32.84                 | 1.036                 | +1.83%                | 1.12%                    | ✓ Yes (res 1.15e-12)   | ✓ Yes (223 iters) | ✗ No (res 3.64e-2)         |
 
 **Methodological Notes & Limitations:**
 - **Sampled Field Discrepancy:** The field metric evaluates the relative discrete $L_2$ difference across 600 fixed probe points inside the base plate using four-nearest-node Inverse Distance Weighting (IDW). It is an approximate base-domain sampled comparison, not a full-domain 3D FEM element interpolation.

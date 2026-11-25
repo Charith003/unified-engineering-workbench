@@ -48,10 +48,10 @@ Run the precompiled GoogleTest verification binary directly:
 ```
 
 ### Summary of Executed Tests:
-- **Total Tests:** 84 across all test suites
+- **Total Tests:** 85 across all test suites
 - **Legacy Suite (`uew_tests.exe`):** 45 passed / 0 failed (Backprop: 8, Hardware: 9, Performance: 6, Thermal 1D: 9, CSV: 6, STL: 7)
-- **3D Thermal & Solvers Suite (`test_all_phases.exe`):** 39 passed / 0 failed (Geometry: 8, Mesh: 6, Validator: 4, Thermal 3D: 3, Solvers & API: 15, Benchmark: 3)
-- **Overall Pass Rate:** 100% (84 / 84)
+- **3D Thermal & Solvers Suite (`test_all_phases.exe`):** 40 passed / 0 failed (Geometry: 8, Mesh: 6, Validator: 4, Thermal 3D: 3, Solvers & API: 15, Benchmark: 4)
+- **Overall Pass Rate:** 100% (85 / 85)
 
 ```powershell
 # Run the 3D Thermal FEM & Solvers test suite:
@@ -69,27 +69,52 @@ If rebuilding from source:
 - C++17 compatible compiler (MinGW-w64 GCC 13.2+ or MSVC 2022)
 - Node.js 18+ (only required if rebuilding frontend assets)
 
-### Commands:
+### Reproducible Build Commands:
+
+#### 1. Build Frontend Production Bundle
 ```powershell
-# 1. Build Frontend Production Bundle
 cd frontend
 npm install
 npm run build
 cd ..
+```
 
-# 2. Build C++ Server & Tests
-g++ -std=c++17 -O3 -Ibackend/include -Ibackend/third_party `
-    backend/src/geometry/stl_parser.cpp `
-    backend/src/geometry/csv_parser.cpp `
-    backend/src/thermal/fem_solver.cpp `
-    backend/src/performance/benchmark.cpp `
-    backend/src/hardware/adapters.cpp `
-    backend/src/backprop/network.cpp `
-    backend/src/api/job_manager.cpp `
-    backend/src/main.cpp -lws2_32 -o uew_server.exe
+#### 2. Configure & Build via CMake
+```powershell
+# Configure CMake build directory
+cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 
-# 3. Build Launcher
+# Build the server executable
+cmake --build build --config Release --target uew_server
+
+# Run CMake test suite via CTest
+ctest --test-dir build --output-on-failure
+```
+
+#### 3. Build Direct 3D Verification Suite & Launcher
+```powershell
+# Build 3D Thermal FEM & Solvers test executable (test_all_phases.exe)
+g++ -std=c++17 -O3 -I backend/include -I backend/src -I backend/third_party `
+    tests/solvers/test_numerical_solvers.cpp tests/benchmark/test_solver_benchmark.cpp `
+    tests/mesh/test_mesh_generator.cpp tests/thermal/test_fem_3d.cpp `
+    tests/geometry/test_heat_sink_geometry.cpp `
+    backend/src/geometry/heat_sink_geometry.cpp backend/src/mesh/mesh_generator.cpp `
+    backend/src/mesh/mesh_validator.cpp backend/src/thermal/fem_3d_solver.cpp `
+    backend/src/solvers/cholesky_solver.cpp backend/src/solvers/conjugate_gradient_solver.cpp `
+    backend/src/solvers/gauss_seidel_solver.cpp backend/src/benchmark/solver_benchmark.cpp `
+    backend/src/api/heat_sink_api.cpp build/gtest-all.o build/gtest_main.o -lws2_32 -o test_all_phases.exe
+
+# Build Launcher
 g++ -std=c++17 -O2 packaging/launcher.cpp -o Launch.exe
+```
+
+#### 4. Runtime Instructions
+```powershell
+# Launch the full Unified Engineering Workbench (starts backend and opens browser):
+.\Launch.exe
+
+# Or start the backend standalone on port 8080:
+.\uew_server.exe
 ```
 
 ---

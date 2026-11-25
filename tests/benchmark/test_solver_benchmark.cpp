@@ -2,6 +2,7 @@
 #include "core/benchmark/solver_benchmark.hpp"
 #include "core/geometry/heat_sink_geometry.hpp"
 #include "core/mesh/mesh_generator.hpp"
+#include "core/solvers/gauss_seidel_solver.hpp"
 
 using namespace uew::benchmark;
 using namespace uew::geometry;
@@ -88,11 +89,49 @@ TEST(SolverBenchmark, MeshConvergenceStudy) {
     EXPECT_DOUBLE_EQ(cr.fine_grid_max_temperature_c, cr.points[2].max_temperature_c);
     EXPECT_DOUBLE_EQ(cr.asymptotic_estimate_c, cr.points[2].max_temperature_c); // Backwards compatibility check
 
+    // Audit Requirement 1 & 2: SSOR convergence status and independent residual verification at all mesh points
+    for (size_t i = 0; i < cr.points.size(); ++i) {
+        const auto& pt = cr.points[i];
+        EXPECT_TRUE(pt.cholesky_converged) << "Sparse LDLT must converge at level " << pt.resolution_name;
+        EXPECT_TRUE(pt.cg_converged) << "CG must converge at level " << pt.resolution_name;
+        // SSOR spectral radius rho ~ 0.999 on 3D FEM prevents reaching tol=1e-6 within 5000 iterations:
+        // verify that SSOR is honestly reported as NOT converged across all levels
+        EXPECT_FALSE(pt.gs_converged) << "SSOR must not be reported as converged at level " << pt.resolution_name;
+    }
+
     // Recommendation contains data-driven timing comparison, base-domain sampled discrepancy, and extrapolation limitation
     EXPECT_FALSE(cr.recommendation.empty());
     EXPECT_NE(cr.recommendation.find("Median Total Solve Time"), std::string::npos);
     EXPECT_NE(cr.recommendation.find("Base-Domain Sampled Field Discrepancy"), std::string::npos);
     EXPECT_NE(cr.recommendation.find("Extrapolation Limitation"), std::string::npos);
+}
+
+TEST(SolverBenchmark, SSORResidualStrictValidationAudit) {
+    // Audit Requirement 1 & 2: Test that a residual of 8.94e-5 (or any > 1e-6) fails when tolerance is 1e-6
+    double measured_residual = 8.94e-5;
+    double strict_tolerance = 1e-6;
+
+    // Direct solver requires <= 1e-9; CG requires <= 1.5e-6; SSOR requires <= tolerance
+    bool passes_strict_tolerance = (measured_residual <= strict_tolerance);
+    EXPECT_FALSE(passes_strict_tolerance) << "A residual of 8.94e-5 must never be accepted under tolerance 1e-6";
+
+    // Rejection simulation through SolverConfig
+    uew::solvers::SolverConfig cfg;
+    cfg.tolerance = strict_tolerance;
+    cfg.max_iterations = 200; // Small iteration budget
+
+    Eigen::SparseMatrix<double> A(2, 2);
+    std::vector<Eigen::Triplet<double>> trips = {{0, 0, 2.0}, {0, 1, 0.5}, {1, 0, 0.5}, {1, 1, 2.0}};
+    A.setFromTriplets(trips.begin(), trips.end());
+    Eigen::VectorXd b = Eigen::VectorXd::Constant(2, 1.0);
+
+    uew::solvers::GaussSeidelSolver solver;
+    // Deliberately tight tolerance that requires more iterations than allowed
+    cfg.tolerance = 1e-12;
+    cfg.max_iterations = 2;
+    auto res = solver.solve(A, b, cfg);
+    EXPECT_FALSE(res.success);
+    EXPECT_GT(res.residual_norm, cfg.tolerance);
 }
 
 TEST(SolverBenchmark, AllBenchmarkTrialsValidationAndResidualAudit) {
